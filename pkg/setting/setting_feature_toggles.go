@@ -18,7 +18,6 @@ var (
 	}, []string{"name"})
 
 	defaultFeatureToggles = map[string]bool{
-		"recordedQueries":               false,
 		"accesscontrol":                 false,
 		"service-accounts":              false,
 		"httpclientprovider_azure_auth": false,
