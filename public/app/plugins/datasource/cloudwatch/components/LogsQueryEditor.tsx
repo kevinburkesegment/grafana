@@ -1,17 +1,20 @@
 // Libraries
+import { css } from '@emotion/css';
 import React, { memo } from 'react';
 
-// Types
 import { AbsoluteTimeRange, QueryEditorProps } from '@grafana/data';
+import { config } from '@grafana/runtime';
 import { InlineFormLabel } from '@grafana/ui';
+
 import { CloudWatchDatasource } from '../datasource';
 import { CloudWatchJsonData, CloudWatchLogsQuery, CloudWatchQuery } from '../types';
-import { CloudWatchLogsQueryField } from './LogsQueryField';
-import CloudWatchLink from './CloudWatchLink';
-import { css } from '@emotion/css';
+
+import { CloudWatchLink } from './CloudWatchLink';
+import CloudWatchLogsQueryField from './LogsQueryField';
+import CloudWatchLogsQueryFieldMonaco from './LogsQueryField/LogsQueryField';
 
 type Props = QueryEditorProps<CloudWatchDatasource, CloudWatchQuery, CloudWatchJsonData> & {
-  allowCustomValue?: boolean;
+  query: CloudWatchLogsQuery;
 };
 
 const labelClass = css`
@@ -20,7 +23,7 @@ const labelClass = css`
 `;
 
 export const CloudWatchLogsQueryEditor = memo(function CloudWatchLogsQueryEditor(props: Props) {
-  const { query, data, datasource, onRunQuery, onChange, exploreId, allowCustomValue = false } = props;
+  const { query, data, datasource, exploreId } = props;
 
   let absolute: AbsoluteTimeRange;
   if (data?.request?.range?.from) {
@@ -36,23 +39,24 @@ export const CloudWatchLogsQueryEditor = memo(function CloudWatchLogsQueryEditor
     };
   }
 
-  return (
-    <CloudWatchLogsQueryField
-      exploreId={exploreId}
-      datasource={datasource}
-      query={query}
-      onBlur={() => {}}
-      onChange={(val: CloudWatchQuery) => {
-        onChange({ ...val, queryMode: 'Logs' });
-      }}
-      onRunQuery={onRunQuery}
-      history={[]}
-      data={data}
-      absoluteRange={absolute}
-      allowCustomValue={allowCustomValue}
+  return config.featureToggles.cloudWatchLogsMonacoEditor ? (
+    <CloudWatchLogsQueryFieldMonaco
+      {...props}
       ExtraFieldElement={
         <InlineFormLabel className={`gf-form-label--btn ${labelClass}`} width="auto" tooltip="Link to Graph in AWS">
-          <CloudWatchLink query={query as CloudWatchLogsQuery} panelData={data} datasource={datasource} />
+          <CloudWatchLink query={query} panelData={data} datasource={datasource} />
+        </InlineFormLabel>
+      }
+    />
+  ) : (
+    <CloudWatchLogsQueryField
+      {...props}
+      exploreId={exploreId}
+      history={[]}
+      absoluteRange={absolute}
+      ExtraFieldElement={
+        <InlineFormLabel className={`gf-form-label--btn ${labelClass}`} width="auto" tooltip="Link to Graph in AWS">
+          <CloudWatchLink query={query} panelData={data} datasource={datasource} />
         </InlineFormLabel>
       }
     />

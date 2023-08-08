@@ -1,10 +1,14 @@
-import { variableAdapters } from '../adapters';
-import { DashboardModel, PanelModel } from '../../dashboard/state';
-import { isAdHoc } from '../guard';
+import { DataLinkBuiltInVars } from '@grafana/data';
+import { Graph } from 'app/core/utils/dag';
+import { mapSet } from 'app/core/utils/set';
+import { stringifyPanelModel } from 'app/features/dashboard/state/PanelModel';
+
 import { safeStringifyValue } from '../../../core/utils/explore';
+import { DashboardModel, PanelModel } from '../../dashboard/state';
+import { variableAdapters } from '../adapters';
+import { isAdHoc } from '../guard';
 import { VariableModel } from '../types';
 import { containsVariable, variableRegex, variableRegexExec } from '../utils';
-import { DataLinkBuiltInVars } from '@grafana/data';
 
 export interface GraphNode {
   id: string;
@@ -50,10 +54,10 @@ export const createDependencyEdges = (variables: VariableModel[]): GraphEdge[] =
   return edges;
 };
 
-function getVariableName(expression: string) {
+export function getVariableName(expression: string) {
   const match = variableRegexExec(expression);
   if (!match) {
-    return null;
+    return undefined;
   }
   const variableName = match.slice(1).find((match) => match !== undefined);
   return variableName;
@@ -114,52 +118,58 @@ const validVariableNames: Record<string, RegExp[]> = {
 };
 
 export const getPropsWithVariable = (variableId: string, parent: { key: string; value: any }, result: any) => {
-  const stringValues = Object.keys(parent.value).reduce((all, key) => {
-    const value = parent.value[key];
-    if (!value || typeof value !== 'string') {
-      return all;
-    }
-
-    const isValidName = validVariableNames[key]
-      ? validVariableNames[key].find((regex: RegExp) => regex.test(variableId))
-      : undefined;
-
-    let hasVariable = containsVariable(value, variableId);
-    if (key === 'repeat' && value === variableId) {
-      // repeat stores value without variable format
-      hasVariable = true;
-    }
-
-    if (!isValidName && hasVariable) {
-      all = {
-        ...all,
-        [key]: value,
-      };
-    }
-
-    return all;
-  }, {} as Record<string, any>);
-
-  const objectValues = Object.keys(parent.value).reduce((all, key) => {
-    const value = parent.value[key];
-    if (value && typeof value === 'object' && Object.keys(value).length) {
-      let id = value.title || value.name || value.id || key;
-      if (Array.isArray(parent.value) && parent.key === 'panels') {
-        id = `${id}[${value.id}]`;
+  const stringValues = Object.keys(parent.value).reduce(
+    (all, key) => {
+      const value = parent.value[key];
+      if (!value || typeof value !== 'string') {
+        return all;
       }
 
-      const newResult = getPropsWithVariable(variableId, { key, value }, {});
+      const isValidName = validVariableNames[key]
+        ? validVariableNames[key].find((regex: RegExp) => regex.test(variableId))
+        : undefined;
 
-      if (Object.keys(newResult).length) {
+      let hasVariable = containsVariable(value, variableId);
+      if (key === 'repeat' && value === variableId) {
+        // repeat stores value without variable format
+        hasVariable = true;
+      }
+
+      if (!isValidName && hasVariable) {
         all = {
           ...all,
-          [id]: newResult,
+          [key]: value,
         };
       }
-    }
 
-    return all;
-  }, {} as Record<string, any>);
+      return all;
+    },
+    {} as Record<string, any>
+  );
+
+  const objectValues = Object.keys(parent.value).reduce(
+    (all, key) => {
+      const value = parent.value[key];
+      if (value && typeof value === 'object' && Object.keys(value).length) {
+        let id = value.title || value.name || value.id || key;
+        if (Array.isArray(parent.value) && parent.key === 'panels') {
+          id = `${id}[${value.id}]`;
+        }
+
+        const newResult = getPropsWithVariable(variableId, { key, value }, {});
+
+        if (Object.keys(newResult).length) {
+          all = {
+            ...all,
+            [id]: newResult,
+          };
+        }
+      }
+
+      return all;
+    },
+    {} as Record<string, any>
+  );
 
   if (Object.keys(stringValues).length || Object.keys(objectValues).length) {
     result = {
@@ -235,7 +245,7 @@ function createUnknownsNetwork(variables: VariableModel[], dashboard: DashboardM
   for (const unknownVariable of unknownVariables) {
     const props = getPropsWithVariable(unknownVariable, { key: 'model', value: model }, {});
     if (Object.keys(props).length) {
-      const variable = ({ id: unknownVariable, name: unknownVariable } as unknown) as VariableModel;
+      const variable = { id: unknownVariable, name: unknownVariable } as unknown as VariableModel;
       unknown.push({ variable, tree: props });
     }
   }
@@ -252,86 +262,32 @@ function createUnknownsNetwork(variables: VariableModel[], dashboard: DashboardM
 
   This doesn't take circular dependencies in consideration.
  */
+
 export function getAllAffectedPanelIdsForVariableChange(
-  variableId: string,
-  variables: VariableModel[],
-  panels: PanelModel[]
-): number[] {
-  const flattenedPanels = flattenPanels(panels);
-  let affectedPanelIds: number[] = getAffectedPanelIdsForVariable(variableId, flattenedPanels);
-  const affectedPanelIdsForAllVariables = getAffectedPanelIdsForVariable(
-    DataLinkBuiltInVars.includeVars,
-    flattenedPanels
-  );
-  affectedPanelIds = [...new Set([...affectedPanelIdsForAllVariables, ...affectedPanelIds])];
-
-  const dependencies = getDependenciesForVariable(variableId, variables, new Set());
-  for (const dependency of dependencies) {
-    const affectedPanelIdsForDependency = getAffectedPanelIdsForVariable(dependency, flattenedPanels);
-    affectedPanelIds = [...new Set([...affectedPanelIdsForDependency, ...affectedPanelIds])];
+  variableIds: string[],
+  variableGraph: Graph,
+  panelsByVar: Record<string, Set<number>>
+): Set<number> {
+  const allDependencies = mapSet(variableGraph.descendants(variableIds), (n) => n.name);
+  allDependencies.add(DataLinkBuiltInVars.includeVars);
+  for (const id of variableIds) {
+    allDependencies.add(id);
   }
 
+  const affectedPanelIds = getDependentPanels([...allDependencies], panelsByVar);
   return affectedPanelIds;
 }
 
-export function getDependenciesForVariable(
-  variableId: string,
-  variables: VariableModel[],
-  deps: Set<string>
-): Set<string> {
-  if (!variables.length) {
-    return deps;
-  }
-
-  for (const variable of variables) {
-    if (variable.name === variableId) {
-      continue;
-    }
-
-    const depends = variableAdapters.get(variable.type).dependsOn(variable, { name: variableId });
-    if (!depends) {
-      continue;
-    }
-
-    deps.add(variable.name);
-    deps = getDependenciesForVariable(variable.name, variables, deps);
-  }
-
-  return deps;
-}
-
-export function getAffectedPanelIdsForVariable(variableId: string, panels: PanelModel[]): number[] {
-  if (!panels.length) {
-    return [];
-  }
-
-  const affectedPanelIds: number[] = [];
-  const repeatRegex = new RegExp(`"repeat":"${variableId}"`);
-  for (const panel of panels) {
-    const panelAsJson = safeStringifyValue(panel.getSaveModel());
-
-    // check for repeats that don't use variableRegex
-    const repeatMatches = panelAsJson.match(repeatRegex);
-    if (repeatMatches?.length) {
-      affectedPanelIds.push(panel.id);
-      continue;
-    }
-
-    const matches = panelAsJson.match(variableRegex);
-    if (!matches) {
-      continue;
-    }
-
-    for (const match of matches) {
-      const variableName = getVariableName(match);
-      if (variableName === variableId) {
-        affectedPanelIds.push(panel.id);
-        break;
-      }
+// Return an array of panel IDs depending on variables
+export function getDependentPanels(variables: string[], panelsByVarUsage: Record<string, Set<number>>) {
+  const thePanels: number[] = [];
+  for (const varId of variables) {
+    if (panelsByVarUsage[varId]) {
+      thePanels.push(...panelsByVarUsage[varId]);
     }
   }
 
-  return affectedPanelIds;
+  return new Set(thePanels);
 }
 
 export interface UsagesToNetwork {
@@ -394,7 +350,7 @@ const countLeaves = (object: any): number => {
     return count + 1;
   }, 0);
 
-  return (total as unknown) as number;
+  return total as unknown as number;
 };
 
 export const getVariableUsages = (variableId: string, usages: VariableUsageTree[]): number => {
@@ -417,4 +373,25 @@ export function flattenPanels(panels: PanelModel[]): PanelModel[] {
   }
 
   return result;
+}
+
+// Accepts an array of panel models, and returns an array of panel IDs paired with
+// the names of any template variables found
+export function getPanelVars(panels: PanelModel[]) {
+  const panelsByVar: Record<string, Set<number>> = {};
+  for (const p of panels) {
+    const jsonString = stringifyPanelModel(p);
+    const repeats = [...jsonString.matchAll(/"repeat":"([^"]+)"/g)].map((m) => m[1]);
+    const varRegexMatches = jsonString.match(variableRegex)?.map((m) => getVariableName(m)) ?? [];
+    const varNames = [...repeats, ...varRegexMatches];
+    for (const varName of varNames) {
+      if (varName! in panelsByVar) {
+        panelsByVar[varName!].add(p.id);
+      } else {
+        panelsByVar[varName!] = new Set([p.id]);
+      }
+    }
+  }
+
+  return panelsByVar;
 }

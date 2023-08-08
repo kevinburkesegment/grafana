@@ -1,16 +1,19 @@
-import React, { HTMLAttributes } from 'react';
-import { PopoverContent } from '../Tooltip/Tooltip';
-import { GrafanaTheme2, SelectableValue } from '@grafana/data';
-import { ToolbarButtonVariant, ToolbarButton, ButtonGroup } from '../Button';
-import { ClickOutsideWrapper } from '../ClickOutsideWrapper/ClickOutsideWrapper';
 import { css } from '@emotion/css';
+import { useButton } from '@react-aria/button';
+import { FocusScope } from '@react-aria/focus';
+import { useMenuTrigger } from '@react-aria/menu';
+import { useMenuTriggerState } from '@react-stately/menu';
+import React, { HTMLAttributes } from 'react';
+
+import { GrafanaTheme2, SelectableValue } from '@grafana/data';
+
 import { useStyles2 } from '../../themes/ThemeContext';
+import { ButtonGroup } from '../Button';
+import { ClickOutsideWrapper } from '../ClickOutsideWrapper/ClickOutsideWrapper';
 import { Menu } from '../Menu/Menu';
 import { MenuItem } from '../Menu/MenuItem';
-import { FocusScope } from '@react-aria/focus';
-import { useMenuTriggerState } from '@react-stately/menu';
-import { useMenuTrigger } from '@react-aria/menu';
-import { useButton } from '@react-aria/button';
+import { ToolbarButton, ToolbarButtonVariant } from '../ToolbarButton';
+import { PopoverContent } from '../Tooltip';
 
 export interface Props<T> extends HTMLAttributes<HTMLButtonElement> {
   className?: string;
@@ -51,17 +54,21 @@ const ButtonSelectComponent = <T,>(props: Props<T>) => {
         {...buttonProps}
         {...restProps}
       >
-        {value?.label || value?.value}
+        {value?.label || (value?.value != null ? String(value?.value) : null)}
       </ToolbarButton>
       {state.isOpen && (
         <div className={styles.menuWrapper}>
           <ClickOutsideWrapper onClick={state.close} parent={document} includeButtonPress={false}>
             <FocusScope contain autoFocus restoreFocus>
-              <Menu onClose={state.close} {...menuProps}>
+              {/*
+                tabIndex=-1 is needed here to support highlighting text within the menu when using FocusScope
+                see https://github.com/adobe/react-spectrum/issues/1604#issuecomment-781574668
+              */}
+              <Menu tabIndex={-1} onClose={state.close} {...menuProps} autoFocus={!!menuProps.autoFocus}>
                 {options.map((item) => (
                   <MenuItem
                     key={`${item.value}`}
-                    label={(item.label || item.value) as string}
+                    label={item.label ?? String(item.value)}
                     onClick={() => onChangeInternal(item)}
                     active={item.value === value?.value}
                     ariaChecked={item.value === value?.value}
@@ -84,15 +91,15 @@ export const ButtonSelect = React.memo(ButtonSelectComponent) as typeof ButtonSe
 
 const getStyles = (theme: GrafanaTheme2) => {
   return {
-    wrapper: css`
-      position: relative;
-      display: inline-flex;
-    `,
-    menuWrapper: css`
-      position: absolute;
-      z-index: ${theme.zIndex.dropdown};
-      top: ${theme.spacing(4)};
-      right: 0;
-    `,
+    wrapper: css({
+      position: 'relative',
+      display: 'inline-flex',
+    }),
+    menuWrapper: css({
+      position: 'absolute',
+      zIndex: theme.zIndex.dropdown,
+      top: theme.spacing(4),
+      right: 0,
+    }),
   };
 };

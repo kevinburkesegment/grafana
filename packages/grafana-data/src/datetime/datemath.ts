@@ -1,6 +1,8 @@
 import { includes, isDate } from 'lodash';
-import { DateTime, dateTime, dateTimeForTimeZone, DurationUnit, isDateTime, ISO_8601 } from './moment_wrapper';
+
 import { TimeZone } from '../types/index';
+
+import { DateTime, dateTime, dateTimeForTimeZone, DurationUnit, isDateTime, ISO_8601 } from './moment_wrapper';
 
 const units: DurationUnit[] = ['y', 'M', 'w', 'd', 'h', 'm', 's', 'Q'];
 
@@ -161,15 +163,11 @@ export function parseDateMath(
       return undefined;
     } else {
       if (type === 0) {
-        if (roundUp) {
-          if (isFiscal) {
-            roundToFiscal(fiscalYearStartMonth, dateTime, unit, roundUp);
-          } else {
-            dateTime.endOf(unit);
-          }
+        if (isFiscal) {
+          roundToFiscal(fiscalYearStartMonth, dateTime, unit, roundUp);
         } else {
-          if (isFiscal) {
-            roundToFiscal(fiscalYearStartMonth, dateTime, unit, roundUp);
+          if (roundUp) {
+            dateTime.endOf(unit);
           } else {
             dateTime.startOf(unit);
           }
@@ -197,7 +195,8 @@ export function roundToFiscal(fyStartMonth: number, dateTime: any, unit: string,
       if (roundUp) {
         roundToFiscal(fyStartMonth, dateTime, unit, false).add(2, 'M').endOf('M');
       } else {
-        dateTime.subtract((dateTime.month() - fyStartMonth + 3) % 3, 'M').startOf('M');
+        // why + 12? to ensure this number is always a positive offset from fyStartMonth
+        dateTime.subtract((dateTime.month() - fyStartMonth + 12) % 3, 'M').startOf('M');
       }
       return dateTime;
     default:

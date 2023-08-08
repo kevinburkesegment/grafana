@@ -4,7 +4,7 @@ import {
   FieldType,
   identityOverrideProcessor,
   SetFieldConfigOptionsArgs,
-  stringOverrideProcessor,
+  Field,
 } from '@grafana/data';
 import {
   BarAlignment,
@@ -16,12 +16,12 @@ import {
   VisibilityMode,
   StackingMode,
   GraphTresholdsStyleMode,
+  GraphTransform,
 } from '@grafana/schema';
-
 import { graphFieldOptions, commonOptionsBuilder } from '@grafana/ui';
 
+import { InsertNullsEditor } from './InsertNullsEditor';
 import { LineStyleEditor } from './LineStyleEditor';
-import { FillBellowToEditor } from './FillBelowToEditor';
 import { SpanNullsEditor } from './SpanNullsEditor';
 import { ThresholdsStyleEditor } from './ThresholdsStyleEditor';
 
@@ -37,11 +37,14 @@ export const defaultGraphConfig: GraphFieldConfig = {
     group: 'A',
   },
   axisGridShow: true,
+  axisCenteredZero: false,
 };
 
 const categoryStyles = ['Graph styles'];
 
-export function getGraphFieldConfig(cfg: GraphFieldConfig): SetFieldConfigOptionsArgs<GraphFieldConfig> {
+export type NullEditorSettings = { isTime: boolean };
+
+export function getGraphFieldConfig(cfg: GraphFieldConfig, isTime = true): SetFieldConfigOptionsArgs<GraphFieldConfig> {
   return {
     standardOptions: {
       [FieldConfigProperty.Color]: {
@@ -74,7 +77,7 @@ export function getGraphFieldConfig(cfg: GraphFieldConfig): SetFieldConfigOption
           settings: {
             options: graphFieldOptions.lineInterpolation,
           },
-          showIf: (c) => c.drawStyle === GraphDrawStyle.Line,
+          showIf: (config) => config.drawStyle === GraphDrawStyle.Line,
         })
         .addRadio({
           path: 'barAlignment',
@@ -84,7 +87,7 @@ export function getGraphFieldConfig(cfg: GraphFieldConfig): SetFieldConfigOption
           settings: {
             options: graphFieldOptions.barAlignment,
           },
-          showIf: (c) => c.drawStyle === GraphDrawStyle.Bars,
+          showIf: (config) => config.drawStyle === GraphDrawStyle.Bars,
         })
         .addSliderInput({
           path: 'lineWidth',
@@ -97,7 +100,7 @@ export function getGraphFieldConfig(cfg: GraphFieldConfig): SetFieldConfigOption
             step: 1,
             ariaLabelForHandle: 'Line width',
           },
-          showIf: (c) => c.drawStyle !== GraphDrawStyle.Points,
+          showIf: (config) => config.drawStyle !== GraphDrawStyle.Points,
         })
         .addSliderInput({
           path: 'fillOpacity',
@@ -110,7 +113,7 @@ export function getGraphFieldConfig(cfg: GraphFieldConfig): SetFieldConfigOption
             step: 1,
             ariaLabelForHandle: 'Fill opacity',
           },
-          showIf: (c) => c.drawStyle !== GraphDrawStyle.Points,
+          showIf: (config) => config.drawStyle !== GraphDrawStyle.Points,
         })
         .addRadio({
           path: 'gradientMode',
@@ -120,31 +123,29 @@ export function getGraphFieldConfig(cfg: GraphFieldConfig): SetFieldConfigOption
           settings: {
             options: graphFieldOptions.fillGradient,
           },
-          showIf: (c) => c.drawStyle !== GraphDrawStyle.Points,
+          showIf: (config) => config.drawStyle !== GraphDrawStyle.Points,
         })
-        .addCustomEditor({
-          id: 'fillBelowTo',
+        .addFieldNamePicker({
           path: 'fillBelowTo',
           name: 'Fill below to',
           category: categoryStyles,
-          editor: FillBellowToEditor,
-          override: FillBellowToEditor,
-          process: stringOverrideProcessor,
           hideFromDefaults: true,
-          shouldApply: (f) => true,
+          settings: {
+            filter: (field: Field) => field.type === FieldType.number,
+          },
         })
         .addCustomEditor<void, LineStyle>({
           id: 'lineStyle',
           path: 'lineStyle',
           name: 'Line style',
           category: categoryStyles,
-          showIf: (c) => c.drawStyle === GraphDrawStyle.Line,
+          showIf: (config) => config.drawStyle === GraphDrawStyle.Line,
           editor: LineStyleEditor,
           override: LineStyleEditor,
           process: identityOverrideProcessor,
-          shouldApply: (f) => f.type === FieldType.number,
+          shouldApply: (field) => field.type === FieldType.number,
         })
-        .addCustomEditor<void, boolean>({
+        .addCustomEditor<NullEditorSettings, boolean>({
           id: 'spanNulls',
           path: 'spanNulls',
           name: 'Connect null values',
@@ -152,9 +153,23 @@ export function getGraphFieldConfig(cfg: GraphFieldConfig): SetFieldConfigOption
           defaultValue: false,
           editor: SpanNullsEditor,
           override: SpanNullsEditor,
-          showIf: (c) => c.drawStyle === GraphDrawStyle.Line,
-          shouldApply: (f) => f.type !== FieldType.time,
+          showIf: (config) => config.drawStyle === GraphDrawStyle.Line,
+          shouldApply: (field) => field.type !== FieldType.time,
           process: identityOverrideProcessor,
+          settings: { isTime },
+        })
+        .addCustomEditor<NullEditorSettings, boolean>({
+          id: 'insertNulls',
+          path: 'insertNulls',
+          name: 'Disconnect values',
+          category: categoryStyles,
+          defaultValue: false,
+          editor: InsertNullsEditor,
+          override: InsertNullsEditor,
+          showIf: (config) => config.drawStyle === GraphDrawStyle.Line,
+          shouldApply: (field) => field.type !== FieldType.time,
+          process: identityOverrideProcessor,
+          settings: { isTime },
         })
         .addRadio({
           path: 'showPoints',
@@ -164,7 +179,7 @@ export function getGraphFieldConfig(cfg: GraphFieldConfig): SetFieldConfigOption
           settings: {
             options: graphFieldOptions.showPoints,
           },
-          showIf: (c) => c.drawStyle !== GraphDrawStyle.Points,
+          showIf: (config) => config.drawStyle !== GraphDrawStyle.Points,
         })
         .addSliderInput({
           path: 'pointSize',
@@ -177,10 +192,33 @@ export function getGraphFieldConfig(cfg: GraphFieldConfig): SetFieldConfigOption
             step: 1,
             ariaLabelForHandle: 'Point size',
           },
-          showIf: (c) => c.showPoints !== VisibilityMode.Never || c.drawStyle === GraphDrawStyle.Points,
+          showIf: (config) => config.showPoints !== VisibilityMode.Never || config.drawStyle === GraphDrawStyle.Points,
         });
 
       commonOptionsBuilder.addStackingConfig(builder, cfg.stacking, categoryStyles);
+
+      builder.addSelect({
+        category: categoryStyles,
+        name: 'Transform',
+        path: 'transform',
+        settings: {
+          options: [
+            {
+              label: 'Constant',
+              value: GraphTransform.Constant,
+              description: 'The first value will be shown as a constant line',
+            },
+            {
+              label: 'Negative Y',
+              value: GraphTransform.NegativeY,
+              description: 'Flip the results to negative values on the y axis',
+            },
+          ],
+          isClearable: true,
+        },
+        hideFromDefaults: true,
+      });
+
       commonOptionsBuilder.addAxisConfig(builder, cfg);
       commonOptionsBuilder.addHideFrom(builder);
 

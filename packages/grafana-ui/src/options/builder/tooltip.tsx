@@ -1,5 +1,5 @@
-import { OptionsWithTooltip, TooltipDisplayMode, SortOrder } from '@grafana/schema';
 import { PanelOptionsEditorBuilder } from '@grafana/data';
+import { OptionsWithTooltip, TooltipDisplayMode, SortOrder } from '@grafana/schema';
 
 export function addTooltipOptions<T extends OptionsWithTooltip>(
   builder: PanelOptionsEditorBuilder<T>,
@@ -38,7 +38,7 @@ export function addTooltipOptions<T extends OptionsWithTooltip>(
       name: 'Values sort order',
       category,
       defaultValue: SortOrder.None,
-      showIf: (options: T) => options.tooltip.mode === TooltipDisplayMode.Multi,
+      showIf: (options: T) => options.tooltip?.mode === TooltipDisplayMode.Multi,
       settings: {
         options: sortOptions,
       },

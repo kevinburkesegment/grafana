@@ -1,90 +1,61 @@
 package service
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
+	"github.com/grafana/grafana/pkg/infra/db/dbtest"
 	"github.com/grafana/grafana/pkg/infra/log"
-	"github.com/grafana/grafana/pkg/models"
+	"github.com/grafana/grafana/pkg/services/contexthandler/ctxkey"
+	contextmodel "github.com/grafana/grafana/pkg/services/contexthandler/model"
+	"github.com/grafana/grafana/pkg/services/stats"
+	"github.com/grafana/grafana/pkg/services/user"
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/web"
-	"github.com/stretchr/testify/require"
 )
 
 func TestApi_getUsageStats(t *testing.T) {
 	type getUsageStatsTestCase struct {
 		desc           string
 		expectedStatus int
-		expectedCall   bool
-		IsGrafanaAdmin bool
+		permissions    map[string][]string
 		enabled        bool
 	}
 	tests := []getUsageStatsTestCase{
 		{
 			desc:           "expect usage stats",
 			enabled:        true,
-			IsGrafanaAdmin: true,
-			expectedCall:   true,
+			permissions:    map[string][]string{ActionRead: {}},
 			expectedStatus: 200,
 		},
 		{
 			desc:           "expect usage stat preview still there after disabling",
 			enabled:        false,
-			IsGrafanaAdmin: true,
-			expectedCall:   true,
+			permissions:    map[string][]string{ActionRead: {}},
 			expectedStatus: 200,
 		},
 		{
-			desc:           "expect http status 403 when not admin",
+			desc:           "expect http status 403 when does not have the right permissions",
 			enabled:        false,
-			IsGrafanaAdmin: false,
-			expectedCall:   false,
+			permissions:    map[string][]string{},
 			expectedStatus: 403,
 		},
 	}
-
-	uss := createService(t, setting.Cfg{})
+	sqlStore := dbtest.NewFakeDB()
+	uss := createService(t, sqlStore, false)
 	uss.registerAPIEndpoints()
-	getSystemStatsWasCalled := false
-
-	uss.Bus.AddHandler(func(ctx context.Context, query *models.GetSystemStatsQuery) error {
-		query.Result = &models.SystemStats{}
-		getSystemStatsWasCalled = true
-		return nil
-	})
-
-	uss.Bus.AddHandler(func(ctx context.Context, query *models.GetDataSourceStatsQuery) error {
-		query.Result = []*models.DataSourceStats{}
-		return nil
-	})
-
-	uss.Bus.AddHandler(func(ctx context.Context, query *models.GetDataSourcesByTypeQuery) error {
-		query.Result = []*models.DataSource{}
-		return nil
-	})
-
-	uss.Bus.AddHandler(func(ctx context.Context, query *models.GetDataSourceAccessStatsQuery) error {
-		query.Result = []*models.DataSourceAccessStats{}
-		return nil
-	})
-
-	uss.Bus.AddHandler(func(ctx context.Context, query *models.GetAlertNotifierUsageStatsQuery) error {
-		query.Result = []*models.NotifierUsageStats{}
-		return nil
-	})
 
 	for _, tt := range tests {
 		t.Run(tt.desc, func(t *testing.T) {
-			getSystemStatsWasCalled = false
 			uss.Cfg.ReportingEnabled = tt.enabled
-			server := setupTestServer(t, &models.SignedInUser{OrgId: 1, IsGrafanaAdmin: tt.IsGrafanaAdmin}, uss)
+			server := setupTestServer(t, &user.SignedInUser{OrgID: 1, Permissions: map[int64]map[string][]string{1: tt.permissions}}, uss)
 
 			usageStats, recorder := getUsageStats(t, server)
-			require.Equal(t, tt.expectedCall, getSystemStatsWasCalled)
 			require.Equal(t, tt.expectedStatus, recorder.Code)
 
 			if tt.expectedStatus == http.StatusOK {
@@ -94,20 +65,20 @@ func TestApi_getUsageStats(t *testing.T) {
 	}
 }
 
-func getUsageStats(t *testing.T, server *web.Mux) (*models.SystemStats, *httptest.ResponseRecorder) {
+func getUsageStats(t *testing.T, server *web.Mux) (*stats.SystemStats, *httptest.ResponseRecorder) {
 	req, err := http.NewRequest(http.MethodGet, "/api/admin/usage-report-preview", http.NoBody)
 	require.NoError(t, err)
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, req)
 
-	var usageStats *models.SystemStats
+	var usageStats stats.SystemStats
 	if recorder.Code == http.StatusOK {
 		require.NoError(t, json.NewDecoder(recorder.Body).Decode(&usageStats))
 	}
-	return usageStats, recorder
+	return &usageStats, recorder
 }
 
-func setupTestServer(t *testing.T, user *models.SignedInUser, service *UsageStats) *web.Mux {
+func setupTestServer(t *testing.T, user *user.SignedInUser, service *UsageStats) *web.Mux {
 	server := web.New()
 	server.UseMiddleware(web.Renderer(path.Join(setting.StaticRootPath, "views"), "[[", "]]"))
 	server.Use(contextProvider(&testContext{user}))
@@ -116,19 +87,19 @@ func setupTestServer(t *testing.T, user *models.SignedInUser, service *UsageStat
 }
 
 type testContext struct {
-	user *models.SignedInUser
+	user *user.SignedInUser
 }
 
 func contextProvider(tc *testContext) web.Handler {
 	return func(c *web.Context) {
 		signedIn := tc.user != nil
-		reqCtx := &models.ReqContext{
+		reqCtx := &contextmodel.ReqContext{
 			Context:      c,
 			SignedInUser: tc.user,
 			IsSignedIn:   signedIn,
-			SkipCache:    true,
+			SkipDSCache:  true,
 			Logger:       log.New("test"),
 		}
-		c.Map(reqCtx)
+		c.Req = c.Req.WithContext(ctxkey.Set(c.Req.Context(), reqCtx))
 	}
 }

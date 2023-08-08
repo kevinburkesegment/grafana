@@ -2,143 +2,96 @@ package loader
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"net/url"
-	"os"
-	"path"
-	"path/filepath"
-	"runtime"
-	"strings"
+	"time"
 
-	"github.com/gosimple/slug"
-
-	"github.com/grafana/grafana/pkg/infra/fs"
-	"github.com/grafana/grafana/pkg/infra/log"
-	"github.com/grafana/grafana/pkg/infra/metrics"
-	"github.com/grafana/grafana/pkg/models"
 	"github.com/grafana/grafana/pkg/plugins"
-	"github.com/grafana/grafana/pkg/plugins/manager/loader/finder"
-	"github.com/grafana/grafana/pkg/plugins/manager/loader/initializer"
+	"github.com/grafana/grafana/pkg/plugins/config"
+	"github.com/grafana/grafana/pkg/plugins/log"
+	"github.com/grafana/grafana/pkg/plugins/manager/loader/angular/angularinspector"
+	"github.com/grafana/grafana/pkg/plugins/manager/loader/assetpath"
+	"github.com/grafana/grafana/pkg/plugins/manager/pipeline/bootstrap"
+	"github.com/grafana/grafana/pkg/plugins/manager/pipeline/discovery"
+	"github.com/grafana/grafana/pkg/plugins/manager/pipeline/initialization"
+	"github.com/grafana/grafana/pkg/plugins/manager/pipeline/termination"
+	"github.com/grafana/grafana/pkg/plugins/manager/process"
+	"github.com/grafana/grafana/pkg/plugins/manager/registry"
 	"github.com/grafana/grafana/pkg/plugins/manager/signature"
-	"github.com/grafana/grafana/pkg/setting"
-	"github.com/grafana/grafana/pkg/util"
-)
-
-var (
-	ErrInvalidPluginJSON         = errors.New("did not find valid type or id properties in plugin.json")
-	ErrInvalidPluginJSONFilePath = errors.New("invalid plugin.json filepath was provided")
+	"github.com/grafana/grafana/pkg/plugins/oauth"
 )
 
 var _ plugins.ErrorResolver = (*Loader)(nil)
 
 type Loader struct {
-	cfg                *plugins.Cfg
-	pluginFinder       finder.Finder
-	pluginInitializer  initializer.Initializer
-	signatureValidator signature.Validator
-	log                log.Logger
+	discovery   discovery.Discoverer
+	bootstrap   bootstrap.Bootstrapper
+	initializer initialization.Initializer
+	termination termination.Terminator
+
+	processManager          process.Service
+	pluginRegistry          registry.Service
+	roleRegistry            plugins.RoleRegistry
+	signatureValidator      signature.Validator
+	externalServiceRegistry oauth.ExternalServiceRegistry
+	assetPath               *assetpath.Service
+	log                     log.Logger
+	cfg                     *config.Cfg
+
+	angularInspector angularinspector.Inspector
 
 	errs map[string]*plugins.SignatureError
 }
 
-func ProvideService(cfg *setting.Cfg, license models.Licensing, authorizer plugins.PluginLoaderAuthorizer,
-	backendProvider plugins.BackendFactoryProvider) (*Loader, error) {
-	return New(plugins.FromGrafanaCfg(cfg), license, authorizer, backendProvider), nil
+func ProvideService(cfg *config.Cfg, authorizer plugins.PluginLoaderAuthorizer,
+	pluginRegistry registry.Service, roleRegistry plugins.RoleRegistry, assetPath *assetpath.Service,
+	angularInspector angularinspector.Inspector, externalServiceRegistry oauth.ExternalServiceRegistry,
+	discovery discovery.Discoverer, bootstrap bootstrap.Bootstrapper, initializer initialization.Initializer,
+	termination termination.Terminator) *Loader {
+	return New(cfg, authorizer, pluginRegistry, process.NewManager(pluginRegistry), roleRegistry, assetPath,
+		angularInspector, externalServiceRegistry, discovery, bootstrap, initializer, termination)
 }
 
-func New(cfg *plugins.Cfg, license models.Licensing, authorizer plugins.PluginLoaderAuthorizer,
-	backendProvider plugins.BackendFactoryProvider) *Loader {
+func New(cfg *config.Cfg, authorizer plugins.PluginLoaderAuthorizer, pluginRegistry registry.Service,
+	processManager process.Service, roleRegistry plugins.RoleRegistry, assetPath *assetpath.Service,
+	angularInspector angularinspector.Inspector, externalServiceRegistry oauth.ExternalServiceRegistry,
+	discovery discovery.Discoverer, bootstrap bootstrap.Bootstrapper, initializer initialization.Initializer,
+	termination termination.Terminator) *Loader {
 	return &Loader{
-		cfg:                cfg,
-		pluginFinder:       finder.New(),
-		pluginInitializer:  initializer.New(cfg, backendProvider, license),
-		signatureValidator: signature.NewValidator(authorizer),
-		errs:               make(map[string]*plugins.SignatureError),
-		log:                log.New("plugin.loader"),
+		pluginRegistry:          pluginRegistry,
+		signatureValidator:      signature.NewValidator(authorizer),
+		processManager:          processManager,
+		errs:                    make(map[string]*plugins.SignatureError),
+		log:                     log.New("plugin.loader"),
+		roleRegistry:            roleRegistry,
+		cfg:                     cfg,
+		assetPath:               assetPath,
+		angularInspector:        angularInspector,
+		externalServiceRegistry: externalServiceRegistry,
+		discovery:               discovery,
+		bootstrap:               bootstrap,
+		initializer:             initializer,
+		termination:             termination,
 	}
 }
 
-func (l *Loader) Load(ctx context.Context, class plugins.Class, paths []string, ignore map[string]struct{}) ([]*plugins.Plugin, error) {
-	pluginJSONPaths, err := l.pluginFinder.Find(paths)
+func (l *Loader) Load(ctx context.Context, src plugins.PluginSource) ([]*plugins.Plugin, error) {
+	// <DISCOVERY STAGE>
+	discoveredPlugins, err := l.discovery.Discover(ctx, src)
 	if err != nil {
-		l.log.Error("plugin finder encountered an error", "err", err)
+		return nil, err
 	}
+	// </DISCOVERY STAGE>
 
-	return l.loadPlugins(ctx, class, pluginJSONPaths, ignore)
-}
-
-func (l *Loader) loadPlugins(ctx context.Context, class plugins.Class, pluginJSONPaths []string, existingPlugins map[string]struct{}) ([]*plugins.Plugin, error) {
-	var foundPlugins = foundPlugins{}
-
-	// load plugin.json files and map directory to JSON data
-	for _, pluginJSONPath := range pluginJSONPaths {
-		plugin, err := l.readPluginJSON(pluginJSONPath)
-		if err != nil {
-			l.log.Warn("Skipping plugin loading as it's plugin.json is invalid", "id", plugin.ID)
-			continue
-		}
-
-		pluginJSONAbsPath, err := filepath.Abs(pluginJSONPath)
-		if err != nil {
-			l.log.Warn("Skipping plugin loading as full plugin.json path could not be calculated", "id", plugin.ID)
-			continue
-		}
-
-		if _, dupe := foundPlugins[filepath.Dir(pluginJSONAbsPath)]; dupe {
-			l.log.Warn("Skipping plugin loading as it's a duplicate", "id", plugin.ID)
-			continue
-		}
-		foundPlugins[filepath.Dir(pluginJSONAbsPath)] = plugin
+	// <BOOTSTRAP STAGE>
+	bootstrappedPlugins, err := l.bootstrap.Bootstrap(ctx, src, discoveredPlugins)
+	if err != nil {
+		return nil, err
 	}
+	// </BOOTSTRAP STAGE>
 
-	foundPlugins.stripDuplicates(existingPlugins, l.log)
-
-	// calculate initial signature state
-	loadedPlugins := make(map[string]*plugins.Plugin)
-	for pluginDir, pluginJSON := range foundPlugins {
-		plugin := &plugins.Plugin{
-			JSONData:  pluginJSON,
-			PluginDir: pluginDir,
-			Class:     class,
-		}
-		plugin.SetLogger(l.log.New("pluginID", plugin.ID))
-
-		sig, err := signature.Calculate(l.log, plugin)
-		if err != nil {
-			l.log.Warn("Could not calculate plugin signature state", "pluginID", plugin.ID, "err", err)
-			continue
-		}
-		plugin.Signature = sig.Status
-		plugin.SignatureType = sig.Type
-		plugin.SignatureOrg = sig.SigningOrg
-		plugin.SignedFiles = sig.Files
-
-		loadedPlugins[plugin.PluginDir] = plugin
-	}
-
-	// wire up plugin dependencies
-	for _, plugin := range loadedPlugins {
-		ancestors := strings.Split(plugin.PluginDir, string(filepath.Separator))
-		ancestors = ancestors[0 : len(ancestors)-1]
-		pluginPath := ""
-
-		if runtime.GOOS != "windows" && filepath.IsAbs(plugin.PluginDir) {
-			pluginPath = "/"
-		}
-		for _, ancestor := range ancestors {
-			pluginPath = filepath.Join(pluginPath, ancestor)
-			if parentPlugin, ok := loadedPlugins[pluginPath]; ok {
-				plugin.Parent = parentPlugin
-				plugin.Parent.Children = append(plugin.Parent.Children, plugin)
-				break
-			}
-		}
-	}
-
-	// validate signatures
-	verifiedPlugins := make([]*plugins.Plugin, 0)
-	for _, plugin := range loadedPlugins {
+	// <VERIFICATION STAGE>
+	verifiedPlugins := make([]*plugins.Plugin, 0, len(bootstrappedPlugins))
+	for _, plugin := range bootstrappedPlugins {
 		signingError := l.signatureValidator.Validate(plugin)
 		if signingError != nil {
 			l.log.Warn("Skipping loading plugin due to problem with signature",
@@ -152,175 +105,61 @@ func (l *Loader) loadPlugins(ctx context.Context, class plugins.Class, pluginJSO
 		// clear plugin error if a pre-existing error has since been resolved
 		delete(l.errs, plugin.ID)
 
-		// verify module.js exists for SystemJS to load
+		// verify module.js exists for SystemJS to load.
+		// CDN plugins can be loaded with plugin.json only, so do not warn for those.
 		if !plugin.IsRenderer() && !plugin.IsCorePlugin() {
-			module := filepath.Join(plugin.PluginDir, "module.js")
-			if exists, err := fs.Exists(module); err != nil {
-				return nil, err
-			} else if !exists {
-				l.log.Warn("Plugin missing module.js",
-					"pluginID", plugin.ID,
-					"warning", "Missing module.js, If you loaded this plugin from git, make sure to compile it.",
-					"path", module)
+			f, err := plugin.FS.Open("module.js")
+			if err != nil {
+				if errors.Is(err, plugins.ErrFileNotExist) {
+					l.log.Warn("Plugin missing module.js", "pluginID", plugin.ID,
+						"warning", "Missing module.js, If you loaded this plugin from git, make sure to compile it.")
+				}
+			} else if f != nil {
+				if err := f.Close(); err != nil {
+					l.log.Warn("Could not close module.js", "pluginID", plugin.ID, "err", err)
+				}
+			}
+		}
+
+		// detect angular for external plugins
+		if plugin.IsExternalPlugin() {
+			var err error
+
+			cctx, canc := context.WithTimeout(ctx, time.Second*10)
+			plugin.AngularDetected, err = l.angularInspector.Inspect(cctx, plugin)
+			canc()
+
+			if err != nil {
+				l.log.Warn("Could not inspect plugin for angular", "pluginID", plugin.ID, "err", err)
+			}
+
+			// Do not initialize plugins if they're using Angular and Angular support is disabled
+			if plugin.AngularDetected && !l.cfg.AngularSupportEnabled {
+				l.log.Error("Refusing to initialize plugin because it's using Angular, which has been disabled", "pluginID", plugin.ID)
+				continue
 			}
 		}
 
 		verifiedPlugins = append(verifiedPlugins, plugin)
 	}
+	// </VERIFICATION STAGE>
 
-	for _, p := range verifiedPlugins {
-		l.setDefaults(p)
-		err := l.pluginInitializer.Initialize(ctx, p)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return verifiedPlugins, nil
-}
-
-func (l *Loader) readPluginJSON(pluginJSONPath string) (plugins.JSONData, error) {
-	l.log.Debug("Loading plugin", "path", pluginJSONPath)
-
-	if !strings.EqualFold(filepath.Ext(pluginJSONPath), ".json") {
-		return plugins.JSONData{}, ErrInvalidPluginJSONFilePath
-	}
-
-	// nolint:gosec
-	// We can ignore the gosec G304 warning on this one because `currentPath` is based
-	// on plugin the folder structure on disk and not user input.
-	reader, err := os.Open(pluginJSONPath)
+	// <INITIALIZATION STAGE>
+	initializedPlugins, err := l.initializer.Initialize(ctx, verifiedPlugins)
 	if err != nil {
-		return plugins.JSONData{}, err
+		return nil, err
 	}
+	// </INITIALIZATION STAGE>
 
-	plugin := plugins.JSONData{}
-	if err := json.NewDecoder(reader).Decode(&plugin); err != nil {
-		return plugins.JSONData{}, err
-	}
-
-	if err := reader.Close(); err != nil {
-		l.log.Warn("Failed to close JSON file", "path", pluginJSONPath, "err", err)
-	}
-
-	if err := validatePluginJSON(plugin); err != nil {
-		return plugins.JSONData{}, err
-	}
-
-	if plugin.ID == "grafana-piechart-panel" {
-		plugin.Name = "Pie Chart (old)"
-	}
-
-	if len(plugin.Dependencies.Plugins) == 0 {
-		plugin.Dependencies.Plugins = []plugins.Dependency{}
-	}
-
-	if plugin.Dependencies.GrafanaVersion == "" {
-		plugin.Dependencies.GrafanaVersion = "*"
-	}
-
-	for _, include := range plugin.Includes {
-		if include.Role == "" {
-			include.Role = models.ROLE_VIEWER
-		}
-	}
-
-	return plugin, nil
+	return initializedPlugins, nil
 }
 
-func (l *Loader) setDefaults(p *plugins.Plugin) {
-	setModule(p)
-
-	p.Info.Logos.Small = pluginLogoURL(p.Type, p.Info.Logos.Small, p.BaseURL)
-	p.Info.Logos.Large = pluginLogoURL(p.Type, p.Info.Logos.Large, p.BaseURL)
-
-	for i := 0; i < len(p.Info.Screenshots); i++ {
-		p.Info.Screenshots[i].Path = evalRelativePluginURLPath(p.Info.Screenshots[i].Path, p.BaseURL, p.Type)
-	}
-
-	if p.IsApp() {
-		for _, child := range p.Children {
-			setPathsBasedOnApp(p, child)
-		}
-
-		// slugify pages
-		for _, include := range p.Includes {
-			if include.Slug == "" {
-				include.Slug = slug.Make(include.Name)
-			}
-			if include.Type == "page" && include.DefaultNav {
-				p.DefaultNavURL = l.cfg.AppSubURL + "/plugins/" + p.ID + "/page/" + include.Slug
-			}
-			if include.Type == "dashboard" && include.DefaultNav {
-				p.DefaultNavURL = l.cfg.AppSubURL + "/dashboard/db/" + include.Slug
-			}
-		}
-	}
-}
-
-func setModule(p *plugins.Plugin) {
-	if p.IsCorePlugin() {
-		// Previously there was an assumption that the Core plugins directory
-		// should be public/app/plugins/<plugin type>/<plugin id>
-		// However this can be an issue if the Core plugins directory is renamed
-		baseDir := filepath.Base(p.PluginDir)
-
-		// use path package for the following statements because these are not file paths
-		p.Module = path.Join("app/plugins", string(p.Type), baseDir, "module")
-		p.BaseURL = path.Join("public/app/plugins", string(p.Type), baseDir)
-		return
-	}
-
-	metrics.SetPluginBuildInformation(p.ID, string(p.Type), p.Info.Version, string(p.Signature))
-
-	p.Module = path.Join("plugins", p.ID, "module")
-	p.BaseURL = path.Join("public/plugins", p.ID)
-}
-
-func setPathsBasedOnApp(parent *plugins.Plugin, child *plugins.Plugin) {
-	appSubPath := strings.ReplaceAll(strings.Replace(child.PluginDir, parent.PluginDir, "", 1), "\\", "/")
-	child.IncludedInAppID = parent.ID
-	child.BaseURL = parent.BaseURL
-
-	if parent.IsCorePlugin() {
-		child.Module = util.JoinURLFragments("app/plugins/app/"+parent.ID, appSubPath) + "/module"
-	} else {
-		child.Module = util.JoinURLFragments("plugins/"+parent.ID, appSubPath) + "/module"
-	}
-}
-
-func pluginLogoURL(pluginType plugins.Type, path, baseURL string) string {
-	if path == "" {
-		return defaultLogoPath(pluginType)
-	}
-
-	return evalRelativePluginURLPath(path, baseURL, pluginType)
-}
-
-func defaultLogoPath(pluginType plugins.Type) string {
-	return "public/img/icn-" + string(pluginType) + ".svg"
-}
-
-func evalRelativePluginURLPath(pathStr, baseURL string, pluginType plugins.Type) string {
-	if pathStr == "" {
-		return ""
-	}
-
-	u, _ := url.Parse(pathStr)
-	if u.IsAbs() {
-		return pathStr
-	}
-
-	// is set as default or has already been prefixed with base path
-	if pathStr == defaultLogoPath(pluginType) || strings.HasPrefix(pathStr, baseURL) {
-		return pathStr
-	}
-
-	return path.Join(baseURL, pathStr)
+func (l *Loader) Unload(ctx context.Context, pluginID string) error {
+	return l.termination.Terminate(ctx, pluginID)
 }
 
 func (l *Loader) PluginErrors() []*plugins.Error {
-	errs := make([]*plugins.Error, 0)
+	errs := make([]*plugins.Error, 0, len(l.errs))
 	for _, err := range l.errs {
 		errs = append(errs, &plugins.Error{
 			PluginID:  err.PluginID,
@@ -329,27 +168,4 @@ func (l *Loader) PluginErrors() []*plugins.Error {
 	}
 
 	return errs
-}
-
-func validatePluginJSON(data plugins.JSONData) error {
-	if data.ID == "" || !data.Type.IsValid() {
-		return ErrInvalidPluginJSON
-	}
-	return nil
-}
-
-type foundPlugins map[string]plugins.JSONData
-
-// stripDuplicates will strip duplicate plugins or plugins that already exist
-func (f *foundPlugins) stripDuplicates(existingPlugins map[string]struct{}, log log.Logger) {
-	pluginsByID := make(map[string]struct{})
-	for k, scannedPlugin := range *f {
-		if _, existing := existingPlugins[scannedPlugin.ID]; existing {
-			log.Debug("Skipping plugin as it's already installed", "plugin", scannedPlugin.ID)
-			delete(*f, k)
-			continue
-		}
-
-		pluginsByID[scannedPlugin.ID] = struct{}{}
-	}
 }

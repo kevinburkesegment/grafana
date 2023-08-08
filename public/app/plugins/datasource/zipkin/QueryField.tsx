@@ -1,5 +1,10 @@
 import { css } from '@emotion/css';
-import { QueryEditorProps } from '@grafana/data';
+import { fromPairs } from 'lodash';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useAsyncFn, useMount, useMountedState } from 'react-use';
+import { AsyncState } from 'react-use/lib/useAsyncFn';
+
+import { GrafanaTheme2, QueryEditorProps } from '@grafana/data';
 import {
   ButtonCascader,
   CascaderOption,
@@ -9,23 +14,35 @@ import {
   RadioButtonGroup,
   useTheme2,
   QueryField,
+  useStyles2,
+  Modal,
+  HorizontalGroup,
+  Button,
 } from '@grafana/ui';
 import { notifyApp } from 'app/core/actions';
 import { createErrorNotification } from 'app/core/copy/appNotification';
 import { dispatch } from 'app/store/store';
-import { fromPairs } from 'lodash';
-import React, { useCallback, useMemo, useState } from 'react';
-import { useAsyncFn, useMount, useMountedState } from 'react-use';
-import { AsyncState } from 'react-use/lib/useAsyncFn';
+
 import { apiPrefix } from './constants';
 import { ZipkinDatasource } from './datasource';
 import { ZipkinQuery, ZipkinQueryType, ZipkinSpan } from './types';
 
 type Props = QueryEditorProps<ZipkinDatasource, ZipkinQuery>;
 
+const getStyles = (theme: GrafanaTheme2) => {
+  return {
+    tracesCascader: css({
+      label: 'tracesCascader',
+      marginRight: theme.spacing(1),
+    }),
+  };
+};
+
 export const ZipkinQueryField = ({ query, onChange, onRunQuery, datasource }: Props) => {
+  const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const serviceOptions = useServices(datasource);
   const theme = useTheme2();
+  const styles = useStyles2(getStyles);
   const { onLoadOptions, allOptions } = useLoadOptions(datasource);
 
   const onSelectTrace = useCallback(
@@ -39,6 +56,15 @@ export const ZipkinQueryField = ({ query, onChange, onRunQuery, datasource }: Pr
     [onChange, onRunQuery, query]
   );
 
+  useEffect(() => {
+    if (!query.queryType) {
+      onChange({
+        ...query,
+        queryType: 'traceID',
+      });
+    }
+  }, [query, onChange]);
+
   const onChangeQuery = (value: string) => {
     const nextQuery = { ...query, query: value };
     onChange(nextQuery);
@@ -48,37 +74,57 @@ export const ZipkinQueryField = ({ query, onChange, onRunQuery, datasource }: Pr
 
   return (
     <>
-      <InlineFieldRow>
-        <InlineField label="Query type">
-          <RadioButtonGroup<ZipkinQueryType>
-            options={[
-              { value: 'traceID', label: 'TraceID' },
-              { value: 'upload', label: 'JSON file' },
-            ]}
-            value={query.queryType || 'traceID'}
-            onChange={(v) =>
-              onChange({
-                ...query,
-                queryType: v,
-              })
-            }
-            size="md"
-          />
-        </InlineField>
-      </InlineFieldRow>
-      {query.queryType === 'upload' ? (
+      <Modal title={'Upload trace'} isOpen={uploadModalOpen} onDismiss={() => setUploadModalOpen(false)}>
         <div className={css({ padding: theme.spacing(2) })}>
           <FileDropzone
             options={{ multiple: false }}
             onLoad={(result) => {
               datasource.uploadedJson = result;
+              onChange({
+                ...query,
+                queryType: 'upload',
+              });
+              setUploadModalOpen(false);
               onRunQuery();
             }}
           />
         </div>
-      ) : (
+      </Modal>
+      <InlineFieldRow>
+        <InlineField label="Query type" grow={true}>
+          <HorizontalGroup spacing={'sm'} align={'center'} justify={'space-between'}>
+            <RadioButtonGroup<ZipkinQueryType>
+              options={[{ value: 'traceID', label: 'TraceID' }]}
+              value={query.queryType || 'traceID'}
+              onChange={(v) =>
+                onChange({
+                  ...query,
+                  queryType: v,
+                })
+              }
+              size="md"
+            />
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setUploadModalOpen(true);
+              }}
+            >
+              Import trace
+            </Button>
+          </HorizontalGroup>
+        </InlineField>
+      </InlineFieldRow>
+      {query.queryType === 'traceID' && (
         <InlineFieldRow>
-          <ButtonCascader options={cascaderOptions} onChange={onSelectTrace} loadData={onLoadOptions}>
+          <ButtonCascader
+            options={cascaderOptions}
+            onChange={onSelectTrace}
+            loadData={onLoadOptions}
+            variant="secondary"
+            buttonProps={{ className: styles.tracesCascader }}
+          >
             Traces
           </ButtonCascader>
           <div className="gf-form gf-form--grow flex-shrink-1 min-width-15">
@@ -112,7 +158,8 @@ export function useServices(datasource: ZipkinDatasource): AsyncState<CascaderOp
       }
       return [];
     } catch (error) {
-      dispatch(notifyApp(createErrorNotification('Failed to load services from Zipkin', error)));
+      const errorToShow = error instanceof Error ? error : 'An unknown error occurred';
+      dispatch(notifyApp(createErrorNotification('Failed to load services from Zipkin', errorToShow)));
       throw error;
     }
   }, [datasource]);
@@ -156,7 +203,8 @@ export function useLoadOptions(datasource: ZipkinDatasource) {
           });
         }
       } catch (error) {
-        dispatch(notifyApp(createErrorNotification('Failed to load spans from Zipkin', error)));
+        const errorToShow = error instanceof Error ? error : 'An unknown error occurred';
+        dispatch(notifyApp(createErrorNotification('Failed to load spans from Zipkin', errorToShow)));
         throw error;
       }
     },
@@ -197,7 +245,8 @@ export function useLoadOptions(datasource: ZipkinDatasource) {
           });
         }
       } catch (error) {
-        dispatch(notifyApp(createErrorNotification('Failed to load spans from Zipkin', error)));
+        const errorToShow = error instanceof Error ? error : 'An unknown error occurred';
+        dispatch(notifyApp(createErrorNotification('Failed to load spans from Zipkin', errorToShow)));
         throw error;
       }
     },

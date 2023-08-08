@@ -1,10 +1,13 @@
-import React from 'react';
 import { css, cx } from '@emotion/css';
+import React from 'react';
+
 import { GrafanaTheme2 } from '@grafana/data';
+import { Icon, useStyles2 } from '@grafana/ui';
+
 import { CatalogPlugin, PluginIconName, PluginListDisplayMode } from '../types';
+
 import { PluginListItemBadges } from './PluginListItemBadges';
 import { PluginLogo } from './PluginLogo';
-import { Icon, useStyles2 } from '@grafana/ui';
 
 export const LOGO_SIZE = '48px';
 
@@ -43,7 +46,7 @@ export const getStyles = (theme: GrafanaTheme2) => {
       gap: ${theme.spacing(2)};
       grid-auto-flow: row;
       background: ${theme.colors.background.secondary};
-      border-radius: ${theme.shape.borderRadius()};
+      border-radius: ${theme.shape.radius.default};
       padding: ${theme.spacing(3)};
       transition: ${theme.transitions.create(['background-color', 'box-shadow', 'border-color', 'color'], {
         duration: theme.transitions.duration.short,

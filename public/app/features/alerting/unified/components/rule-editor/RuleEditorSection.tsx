@@ -1,15 +1,21 @@
 import { css } from '@emotion/css';
+import React, { ReactElement } from 'react';
+
 import { GrafanaTheme2 } from '@grafana/data';
 import { FieldSet, useStyles2 } from '@grafana/ui';
-import React, { FC } from 'react';
 
 export interface RuleEditorSectionProps {
   title: string;
   stepNo: number;
-  description?: string;
+  description?: string | ReactElement;
 }
 
-export const RuleEditorSection: FC<RuleEditorSectionProps> = ({ title, stepNo, children, description }) => {
+export const RuleEditorSection = ({
+  title,
+  stepNo,
+  children,
+  description,
+}: React.PropsWithChildren<RuleEditorSectionProps>) => {
   const styles = useStyles2(getStyles);
 
   return (
@@ -19,7 +25,7 @@ export const RuleEditorSection: FC<RuleEditorSectionProps> = ({ title, stepNo, c
       </div>
       <div className={styles.content}>
         <FieldSet label={title} className={styles.fieldset}>
-          {description && <p className={styles.description}>{description}</p>}
+          {description && <div className={styles.description}>{description}</div>}
           {children}
         </FieldSet>
       </div>
@@ -44,13 +50,14 @@ const getStyles = (theme: GrafanaTheme2) => ({
   `,
   description: css`
     margin-top: -${theme.spacing(2)};
+    color: ${theme.colors.text.secondary};
   `,
   stepNo: css`
     display: inline-block;
     width: ${theme.spacing(4)};
     height: ${theme.spacing(4)};
     line-height: ${theme.spacing(4)};
-    border-radius: ${theme.spacing(4)};
+    border-radius: ${theme.shape.radius.circle};
     text-align: center;
     color: ${theme.colors.text.maxContrast};
     background-color: ${theme.colors.background.canvas};

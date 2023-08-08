@@ -1,10 +1,12 @@
+import { css } from '@emotion/css';
 import { useFocusRing } from '@react-aria/focus';
 import React from 'react';
 import tinycolor from 'tinycolor2';
-import { useTheme2 } from '../../themes/ThemeContext';
-import { selectors } from '@grafana/e2e-selectors';
+
 import { GrafanaTheme2 } from '@grafana/data';
-import { css } from '@emotion/css';
+import { selectors } from '@grafana/e2e-selectors';
+
+import { useTheme2 } from '../../themes/ThemeContext';
 
 /** @internal */
 export enum ColorSwatchVariant {
@@ -26,13 +28,18 @@ export const ColorSwatch = React.forwardRef<HTMLDivElement, Props>(
     const theme = useTheme2();
     const { isFocusVisible, focusProps } = useFocusRing();
     const styles = getStyles(theme, variant, color, isFocusVisible, isSelected);
-    const hasLabel = !!label;
-    const colorLabel = `${ariaLabel || label} color`;
+    const hasLabel = !label;
+    const colorLabel = ariaLabel || label;
 
     return (
       <div ref={ref} className={styles.wrapper} data-testid={selectors.components.ColorSwatch.name} {...otherProps}>
         {hasLabel && <span className={styles.label}>{label}</span>}
-        <button className={styles.swatch} {...focusProps} aria-label={colorLabel} />
+        <button
+          className={styles.swatch}
+          {...focusProps}
+          aria-label={hasLabel ? `${colorLabel} color` : 'Pick a color'}
+          type="button"
+        />
       </div>
     );
   }
@@ -68,7 +75,7 @@ const getStyles = (
       height: swatchSize,
       background: `${color}`,
       border,
-      borderRadius: '50%',
+      borderRadius: theme.shape.radius.circle,
       outlineOffset: '1px',
       outline: isFocusVisible ? `2px solid  ${theme.colors.primary.main}` : 'none',
       boxShadow: isSelected
@@ -79,6 +86,9 @@ const getStyles = (
       }),
       '&:hover': {
         transform: 'scale(1.1)',
+      },
+      '@media (forced-colors: active)': {
+        forcedColorAdjust: 'none',
       },
     }),
   };

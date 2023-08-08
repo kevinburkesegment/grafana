@@ -1,4 +1,6 @@
+import { get as lodashGet } from 'lodash';
 import React from 'react';
+
 import {
   EventBus,
   InterpolateFunction,
@@ -6,19 +8,19 @@ import {
   StandardEditorContext,
   VariableSuggestionsScope,
 } from '@grafana/data';
-import { get as lodashGet } from 'lodash';
-import { getDataLinksVariableSuggestions } from 'app/features/panel/panellinks/link_srv';
-import { OptionPaneRenderProps } from './types';
-import { setOptionImmutably, updateDefaultFieldConfigValue } from './utils';
-import { OptionsPaneItemDescriptor } from './OptionsPaneItemDescriptor';
-import { OptionsPaneCategoryDescriptor } from './OptionsPaneCategoryDescriptor';
+import { PanelOptionsSupplier } from '@grafana/data/src/panel/PanelPlugin';
 import {
   isNestedPanelOptions,
   NestedValueAccess,
   PanelOptionsEditorBuilder,
 } from '@grafana/data/src/utils/OptionsUIBuilders';
-import { PanelOptionsSupplier } from '@grafana/data/src/panel/PanelPlugin';
+import { getDataLinksVariableSuggestions } from 'app/features/panel/panellinks/link_srv';
+
+import { OptionsPaneCategoryDescriptor } from './OptionsPaneCategoryDescriptor';
+import { OptionsPaneItemDescriptor } from './OptionsPaneItemDescriptor';
 import { getOptionOverrides } from './state/getOptionOverrides';
+import { OptionPaneRenderProps } from './types';
+import { setOptionImmutably, updateDefaultFieldConfigValue } from './utils';
 
 type categoryGetter = (categoryNames?: string[]) => OptionsPaneCategoryDescriptor;
 
@@ -80,8 +82,8 @@ export function getVisualizationOptions(props: OptionPaneRenderProps): OptionsPa
   };
 
   const access: NestedValueAccess = {
-    getValue: (path: string) => lodashGet(currentOptions, path),
-    onChange: (path: string, value: any) => {
+    getValue: (path) => lodashGet(currentOptions, path),
+    onChange: (path, value) => {
       const newOptions = setOptionImmutably(currentOptions, path, value);
       onPanelOptionsChanged(newOptions);
     },
@@ -150,10 +152,10 @@ export function fillOptionsPaneItems(
   supplier: PanelOptionsSupplier<any>,
   access: NestedValueAccess,
   getOptionsPaneCategory: categoryGetter,
-  context: StandardEditorContext<any, any>,
+  context: StandardEditorContext<any>,
   parentCategory?: OptionsPaneCategoryDescriptor
 ) {
-  const builder = new PanelOptionsEditorBuilder<any>();
+  const builder = new PanelOptionsEditorBuilder();
   supplier(builder, context);
 
   for (const pluginOption of builder.getItems()) {
@@ -194,7 +196,7 @@ export function fillOptionsPaneItems(
           return (
             <Editor
               value={access.getValue(pluginOption.path)}
-              onChange={(value: any) => {
+              onChange={(value) => {
                 access.onChange(pluginOption.path, value);
               }}
               item={pluginOption}

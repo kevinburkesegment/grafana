@@ -1,8 +1,11 @@
 import { createAction, createAsyncThunk, Update } from '@reduxjs/toolkit';
-import { getBackendSrv } from '@grafana/runtime';
+
 import { PanelPlugin } from '@grafana/data';
-import { StoreState, ThunkResult } from 'app/types';
+import { getBackendSrv, isFetchError } from '@grafana/runtime';
 import { importPanelPlugin } from 'app/features/plugins/importPanelPlugin';
+import { StoreState, ThunkResult } from 'app/types';
+
+import { invalidatePluginInCache } from '../../systemjsPlugins/pluginCacheBuster';
 import {
   getRemotePlugins,
   getPluginErrors,
@@ -12,9 +15,8 @@ import {
   uninstallPlugin,
 } from '../api';
 import { STATE_PREFIX } from '../constants';
-import { mergeLocalsAndRemotes, updatePanels } from '../helpers';
-import { CatalogPlugin, RemotePlugin } from '../types';
-import { invalidatePluginInCache } from '../../pluginCacheBuster';
+import { mapLocalToCatalog, mergeLocalsAndRemotes, updatePanels } from '../helpers';
+import { CatalogPlugin, RemotePlugin, LocalPlugin } from '../types';
 
 export const fetchAll = createAsyncThunk(`${STATE_PREFIX}/fetchAll`, async (_, thunkApi) => {
   try {
@@ -31,68 +33,98 @@ export const fetchAll = createAsyncThunk(`${STATE_PREFIX}/fetchAll`, async (_, t
   }
 });
 
+export const fetchAllLocal = createAsyncThunk(`${STATE_PREFIX}/fetchAllLocal`, async (_, thunkApi) => {
+  try {
+    const localPlugins = await getLocalPlugins();
+    return localPlugins.map((plugin: LocalPlugin) => mapLocalToCatalog(plugin));
+  } catch (e) {
+    return thunkApi.rejectWithValue('Unknown error.');
+  }
+});
+
 export const fetchRemotePlugins = createAsyncThunk<RemotePlugin[], void, { rejectValue: RemotePlugin[] }>(
   `${STATE_PREFIX}/fetchRemotePlugins`,
   async (_, thunkApi) => {
     try {
       return await getRemotePlugins();
     } catch (error) {
-      error.isHandled = true;
+      if (isFetchError(error)) {
+        error.isHandled = true;
+      }
       return thunkApi.rejectWithValue([]);
     }
   }
 );
 
-export const fetchDetails = createAsyncThunk(`${STATE_PREFIX}/fetchDetails`, async (id: string, thunkApi) => {
-  try {
-    const details = await getPluginDetails(id);
-
-    return {
-      id,
-      changes: { details },
-    } as Update<CatalogPlugin>;
-  } catch (e) {
-    return thunkApi.rejectWithValue('Unknown error.');
-  }
-});
-
-// We are also using the install API endpoint to update the plugin
-export const install = createAsyncThunk(
-  `${STATE_PREFIX}/install`,
-  async ({ id, version, isUpdating = false }: { id: string; version?: string; isUpdating?: boolean }, thunkApi) => {
-    const changes = isUpdating
-      ? { isInstalled: true, installedVersion: version, hasUpdate: false }
-      : { isInstalled: true, installedVersion: version };
+export const fetchDetails = createAsyncThunk<Update<CatalogPlugin>, string>(
+  `${STATE_PREFIX}/fetchDetails`,
+  async (id: string, thunkApi) => {
     try {
-      await installPlugin(id);
-      await updatePanels();
+      const details = await getPluginDetails(id);
 
-      if (isUpdating) {
-        invalidatePluginInCache(id);
-      }
-
-      return { id, changes } as Update<CatalogPlugin>;
+      return {
+        id,
+        changes: { details },
+      };
     } catch (e) {
       return thunkApi.rejectWithValue('Unknown error.');
     }
   }
 );
 
-export const uninstall = createAsyncThunk(`${STATE_PREFIX}/uninstall`, async (id: string, thunkApi) => {
+// We are also using the install API endpoint to update the plugin
+export const install = createAsyncThunk<
+  Update<CatalogPlugin>,
+  {
+    id: string;
+    version?: string;
+    isUpdating?: boolean;
+  }
+>(`${STATE_PREFIX}/install`, async ({ id, version, isUpdating = false }, thunkApi) => {
+  const changes = isUpdating
+    ? { isInstalled: true, installedVersion: version, hasUpdate: false }
+    : { isInstalled: true, installedVersion: version };
   try {
-    await uninstallPlugin(id);
+    await installPlugin(id);
     await updatePanels();
 
-    invalidatePluginInCache(id);
+    if (isUpdating) {
+      invalidatePluginInCache(id);
+    }
 
-    return {
-      id,
-      changes: { isInstalled: false, installedVersion: undefined },
-    } as Update<CatalogPlugin>;
+    return { id, changes };
   } catch (e) {
+    console.error(e);
+    if (isFetchError(e)) {
+      return thunkApi.rejectWithValue(e.data);
+    }
+
     return thunkApi.rejectWithValue('Unknown error.');
   }
 });
+
+export const unsetInstall = createAsyncThunk(`${STATE_PREFIX}/install`, async () => ({}));
+
+export const uninstall = createAsyncThunk<Update<CatalogPlugin>, string>(
+  `${STATE_PREFIX}/uninstall`,
+  async (id, thunkApi) => {
+    try {
+      await uninstallPlugin(id);
+      await updatePanels();
+
+      invalidatePluginInCache(id);
+
+      return {
+        id,
+        changes: { isInstalled: false, installedVersion: undefined },
+      };
+    } catch (e) {
+      console.error(e);
+
+      return thunkApi.rejectWithValue('Unknown error.');
+    }
+  }
+);
 
 // We need this to be backwards-compatible with other parts of Grafana.
 // (Originally in "public/app/features/plugins/state/actions.ts")

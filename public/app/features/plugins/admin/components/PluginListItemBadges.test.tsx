@@ -1,9 +1,12 @@
-import React from 'react';
 import { render, screen } from '@testing-library/react';
+import React from 'react';
+
 import { PluginErrorCode, PluginSignatureStatus } from '@grafana/data';
-import { PluginListItemBadges } from './PluginListItemBadges';
-import { CatalogPlugin } from '../types';
 import { config } from '@grafana/runtime';
+
+import { CatalogPlugin } from '../types';
+
+import { PluginListItemBadges } from './PluginListItemBadges';
 
 describe('PluginListItemBadges', () => {
   const plugin: CatalogPlugin = {
@@ -71,5 +74,15 @@ describe('PluginListItemBadges', () => {
   it('renders an upgrade badge (when plugin has an available update)', () => {
     render(<PluginListItemBadges plugin={{ ...plugin, hasUpdate: true, installedVersion: '0.0.9' }} />);
     expect(screen.getByText(/update available/i)).toBeVisible();
+  });
+
+  it('renders an angular badge (when plugin is angular)', () => {
+    render(<PluginListItemBadges plugin={{ ...plugin, angularDetected: true }} />);
+    expect(screen.getByText(/angular/i)).toBeVisible();
+  });
+
+  it('does not render an angular badge (when plugin is not angular)', () => {
+    render(<PluginListItemBadges plugin={{ ...plugin, angularDetected: false }} />);
+    expect(screen.queryByText(/angular/i)).toBeNull();
   });
 });

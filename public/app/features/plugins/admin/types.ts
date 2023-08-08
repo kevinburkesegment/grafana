@@ -1,10 +1,12 @@
 import { EntityState } from '@reduxjs/toolkit';
+
 import {
   PluginType,
   PluginSignatureStatus,
   PluginSignatureType,
   PluginDependencies,
   PluginErrorCode,
+  WithAccessControlMetadata,
 } from '@grafana/data';
 import { IconName } from '@grafana/ui';
 import { StoreState, PluginsState } from 'app/types';
@@ -20,9 +22,6 @@ export enum PluginAdminRoutes {
   Home = 'plugins-home',
   Browse = 'plugins-browse',
   Details = 'plugins-details',
-  HomeAdmin = 'plugins-home-admin',
-  BrowseAdmin = 'plugins-browse-admin',
-  DetailsAdmin = 'plugins-details-admin',
 }
 
 export enum PluginIconName {
@@ -30,9 +29,10 @@ export enum PluginIconName {
   datasource = 'database',
   panel = 'credit-card',
   renderer = 'capture',
+  secretsmanager = 'key-skeleton-alt',
 }
 
-export interface CatalogPlugin {
+export interface CatalogPlugin extends WithAccessControlMetadata {
   description: string;
   downloads: number;
   hasUpdate: boolean;
@@ -57,6 +57,7 @@ export interface CatalogPlugin {
   installedVersion?: string;
   details?: CatalogPluginDetails;
   error?: PluginErrorCode;
+  angularDetected?: boolean;
 }
 
 export interface CatalogPluginDetails {
@@ -123,9 +124,10 @@ export type RemotePlugin = {
   versionSignedByOrg: string;
   versionSignedByOrgName: string;
   versionStatus: string;
+  angularDetected?: boolean;
 };
 
-export type LocalPlugin = {
+export type LocalPlugin = WithAccessControlMetadata & {
   category: string;
   defaultNavUrl: string;
   dev?: boolean;
@@ -156,6 +158,7 @@ export type LocalPlugin = {
   state: string;
   type: PluginType;
   dependencies: PluginDependencies;
+  angularDetected: boolean;
 };
 
 interface Rel {
@@ -211,6 +214,7 @@ export enum PluginTabLabels {
   VERSIONS = 'Version history',
   CONFIG = 'Config',
   DASHBOARDS = 'Dashboards',
+  USAGE = 'Usage',
 }
 
 export enum PluginTabIds {
@@ -218,6 +222,7 @@ export enum PluginTabIds {
   VERSIONS = 'version-history',
   CONFIG = 'config',
   DASHBOARDS = 'dashboards',
+  USAGE = 'usage',
 }
 
 export enum RequestStatus {
@@ -240,7 +245,7 @@ export type RequestInfo = {
 
 export type PluginDetailsTab = {
   label: PluginTabLabels | string;
-  icon?: IconName | string;
+  icon?: IconName;
   id: PluginTabIds | string;
   href?: string;
 };

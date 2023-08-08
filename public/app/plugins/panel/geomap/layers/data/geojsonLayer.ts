@@ -1,21 +1,31 @@
-import { MapLayerRegistryItem, MapLayerOptions, PanelData, GrafanaTheme2, PluginState } from '@grafana/data';
+import { FeatureLike } from 'ol/Feature';
 import Map from 'ol/Map';
+import { unByKey } from 'ol/Observable';
+import GeoJSON from 'ol/format/GeoJSON';
 import VectorLayer from 'ol/layer/Vector';
 import VectorSource from 'ol/source/Vector';
-import GeoJSON from 'ol/format/GeoJSON';
-import { unByKey } from 'ol/Observable';
-import { checkFeatureMatchesStyleRule } from '../../utils/checkFeatureMatchesStyleRule';
-import { ComparisonOperation, FeatureRuleConfig, FeatureStyleConfig } from '../../types';
 import { Style } from 'ol/style';
-import { FeatureLike } from 'ol/Feature';
-import { GeomapStyleRulesEditor } from '../../editor/GeomapStyleRulesEditor';
-import { defaultStyleConfig, StyleConfig, StyleConfigState } from '../../style/types';
-import { getStyleConfigState } from '../../style/utils';
-import { polyStyle } from '../../style/markers';
-import { StyleEditor } from './StyleEditor';
 import { ReplaySubject } from 'rxjs';
 import { map as rxjsmap, first } from 'rxjs/operators';
+
+import {
+  MapLayerRegistryItem,
+  MapLayerOptions,
+  GrafanaTheme2,
+  EventBus,
+} from '@grafana/data';
+import { ComparisonOperation } from '@grafana/schema';
+
+import { GeomapStyleRulesEditor } from '../../editor/GeomapStyleRulesEditor';
+import { StyleEditor } from '../../editor/StyleEditor';
+import { polyStyle } from '../../style/markers';
+import { defaultStyleConfig, StyleConfig, StyleConfigState } from '../../style/types';
+import { getStyleConfigState } from '../../style/utils';
+import { FeatureRuleConfig, FeatureStyleConfig } from '../../types';
+import { checkFeatureMatchesStyleRule } from '../../utils/checkFeatureMatchesStyleRule';
 import { getLayerPropertyInfo } from '../../utils/getFeatures';
+import { getPublicGeoJSONFiles } from '../../utils/utils';
+
 
 export interface GeoJSONMapperConfig {
   // URL for a geojson file
@@ -55,13 +65,12 @@ export const geojsonLayer: MapLayerRegistryItem<GeoJSONMapperConfig> = {
   name: 'GeoJSON',
   description: 'Load static data from a geojson file',
   isBaseMap: false,
-  state: PluginState.beta,
 
   /**
    * Function that configures transformation and returns a transformer
    * @param options
    */
-  create: async (map: Map, options: MapLayerOptions<GeoJSONMapperConfig>, theme: GrafanaTheme2) => {
+  create: async (map: Map, options: MapLayerOptions<GeoJSONMapperConfig>, eventBus: EventBus, theme: GrafanaTheme2) => {
     const config = { ...defaultOptions, ...options.config };
 
     const source = new VectorSource({
@@ -73,7 +82,7 @@ export const geojsonLayer: MapLayerRegistryItem<GeoJSONMapperConfig> = {
 
     const key = source.on('change', () => {
       //one geojson loads
-      if (source.getState() == 'ready') {
+      if (source.getState() === 'ready') {
         unByKey(key);
         features.next(source.getFeatures());
       }
@@ -141,9 +150,6 @@ export const geojsonLayer: MapLayerRegistryItem<GeoJSONMapperConfig> = {
 
     return {
       init: () => vectorLayer,
-      update: (data: PanelData) => {
-        console.log('todo... find values matching the ID and update');
-      },
       registerOptionsUI: (builder) => {
         // get properties for first feature to use as ui options
         const layerInfo = features.pipe(
@@ -156,11 +162,7 @@ export const geojsonLayer: MapLayerRegistryItem<GeoJSONMapperConfig> = {
             path: 'config.src',
             name: 'GeoJSON URL',
             settings: {
-              options: [
-                { label: 'public/maps/countries.geojson', value: 'public/maps/countries.geojson' },
-                { label: 'public/maps/usa-states.geojson', value: 'public/maps/usa-states.geojson' },
-                { label: 'public/gazetteer/airports.geojson', value: 'public/gazetteer/airports.geojson' },
-              ],
+              options: getPublicGeoJSONFiles() ?? [],
               allowCustomValue: true,
             },
             defaultValue: defaultOptions.src,
@@ -168,7 +170,7 @@ export const geojsonLayer: MapLayerRegistryItem<GeoJSONMapperConfig> = {
           .addCustomEditor({
             id: 'config.style',
             path: 'config.style',
-            name: 'Default Style',
+            name: 'Default style',
             description: 'The style to apply when no rules above match',
             editor: StyleEditor,
             settings: {
@@ -180,7 +182,7 @@ export const geojsonLayer: MapLayerRegistryItem<GeoJSONMapperConfig> = {
           .addCustomEditor({
             id: 'config.rules',
             path: 'config.rules',
-            name: 'Style Rules',
+            name: 'Style rules',
             description: 'Apply styles based on feature properties',
             editor: GeomapStyleRulesEditor,
             settings: {
@@ -194,3 +196,4 @@ export const geojsonLayer: MapLayerRegistryItem<GeoJSONMapperConfig> = {
   },
   defaultOptions,
 };
+

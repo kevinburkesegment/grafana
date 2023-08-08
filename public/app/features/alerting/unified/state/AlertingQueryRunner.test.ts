@@ -1,5 +1,9 @@
+import { defaultsDeep } from 'lodash';
+import { Observable, of, throwError } from 'rxjs';
+import { delay, take } from 'rxjs/operators';
+import { createFetchResponse } from 'test/helpers/createFetchResponse';
+
 import {
-  ArrayVector,
   DataFrame,
   DataFrameJSON,
   DataSourceApi,
@@ -11,10 +15,8 @@ import {
 } from '@grafana/data';
 import { DataSourceSrv, FetchResponse } from '@grafana/runtime';
 import { BackendSrv } from 'app/core/services/backend_srv';
-import { AlertQuery } from 'app/types/unified-alerting-dto';
-import { Observable, of, throwError } from 'rxjs';
-import { delay, take } from 'rxjs/operators';
-import { createFetchResponse } from 'test/helpers/createFetchResponse';
+import { AlertDataQuery, AlertQuery } from 'app/types/unified-alerting-dto';
+
 import { AlertingQueryResponse, AlertingQueryRunner } from './AlertingQueryRunner';
 
 describe('AlertingQueryRunner', () => {
@@ -93,12 +95,15 @@ describe('AlertingQueryRunner', () => {
 
     await expect(data.pipe(take(1))).toEmitValuesWith((values) => {
       const [data] = values;
+
+      // these test are flakey since the absolute computed "timeRange" can differ from the relative "defaultRelativeTimeRange"
+      // so instead we will check if the size of the timeranges match
       const relativeA = rangeUtil.timeRangeToRelative(data.A.timeRange);
       const relativeB = rangeUtil.timeRangeToRelative(data.B.timeRange);
-      const expected = getDefaultRelativeTimeRange();
+      const defaultRange = getDefaultRelativeTimeRange();
 
-      expect(relativeA).toEqual(expected);
-      expect(relativeB).toEqual(expected);
+      expect(relativeA.from - defaultRange.from).toEqual(relativeA.to - defaultRange.to);
+      expect(relativeB.from - defaultRange.from).toEqual(relativeB.to - defaultRange.to);
     });
   });
 
@@ -184,7 +189,7 @@ describe('AlertingQueryRunner', () => {
     });
   });
 
-  it('should not execute if a query fails filterQuery check', async () => {
+  it('should not execute if all queries fail filterQuery check', async () => {
     const runner = new AlertingQueryRunner(
       mockBackendSrv({
         fetch: () => throwError(new Error("shouldn't happen")),
@@ -205,6 +210,39 @@ describe('AlertingQueryRunner', () => {
       expect(data.B.series).toHaveLength(0);
     });
   });
+
+  it('should skip hidden queries', async () => {
+    const results = createFetchResponse<AlertingQueryResponse>({
+      results: {
+        B: { frames: [createDataFrameJSON([1, 2, 3])] },
+      },
+    });
+
+    const runner = new AlertingQueryRunner(
+      mockBackendSrv({
+        fetch: () => of(results),
+      }),
+      mockDataSourceSrv({ filterQuery: (model: AlertDataQuery) => model.hide !== true })
+    );
+
+    const data = runner.get();
+    runner.run([
+      createQuery('A', {
+        model: {
+          refId: 'A',
+          hide: true,
+        },
+      }),
+      createQuery('B'),
+    ]);
+
+    await expect(data.pipe(take(1))).toEmitValuesWith((values) => {
+      const [loading, _data] = values;
+
+      expect(loading.A).toBeUndefined();
+      expect(loading.B.state).toEqual(LoadingState.Done);
+    });
+  });
 });
 
 type MockBackendSrvConfig = {
@@ -212,16 +250,16 @@ type MockBackendSrvConfig = {
 };
 
 const mockBackendSrv = ({ fetch }: MockBackendSrvConfig): BackendSrv => {
-  return ({
+  return {
     fetch,
     resolveCancelerIfExists: jest.fn(),
-  } as unknown) as BackendSrv;
+  } as unknown as BackendSrv;
 };
 
 const mockDataSourceSrv = (dsApi?: Partial<DataSourceApi>) => {
-  return ({
+  return {
     get: () => Promise.resolve(dsApi ?? {}),
-  } as unknown) as DataSourceSrv;
+  } as unknown as DataSourceSrv;
 };
 
 const expectDataFrameWithValues = ({ time, values }: { time: number[]; values: number[] }): DataFrame => {
@@ -233,7 +271,7 @@ const expectDataFrameWithValues = ({ time, values }: { time: number[]; values: n
         name: 'time',
         state: null,
         type: FieldType.time,
-        values: new ArrayVector(time),
+        values: time,
       } as Field,
       {
         config: {},
@@ -241,7 +279,7 @@ const expectDataFrameWithValues = ({ time, values }: { time: number[]; values: n
         name: 'value',
         state: null,
         type: FieldType.number,
-        values: new ArrayVector(values),
+        values: values,
       } as Field,
     ],
     length: values.length,
@@ -265,12 +303,12 @@ const createDataFrameJSON = (values: number[]): DataFrameJSON => {
   };
 };
 
-const createQuery = (refId: string): AlertQuery => {
-  return {
+const createQuery = (refId: string, options?: Partial<AlertQuery>): AlertQuery => {
+  return defaultsDeep(options, {
     refId,
     queryType: '',
     datasourceUid: '',
     model: { refId },
     relativeTimeRange: getDefaultRelativeTimeRange(),
-  };
+  });
 };

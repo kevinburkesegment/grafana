@@ -1,6 +1,3 @@
-import { FieldConfigEditorProps, FieldConfigPropertyItem, FieldConfigEditorConfig } from '../types/fieldOverrides';
-import { OptionsEditorItem, OptionsUIRegistryBuilder } from '../types/OptionsUIRegistryBuilder';
-import { PanelOptionsEditorConfig, PanelOptionsEditorItem } from '../types/panel';
 import {
   numberOverrideProcessor,
   selectOverrideProcessor,
@@ -19,6 +16,9 @@ import {
   StandardEditorContext,
 } from '../field';
 import { PanelOptionsSupplier } from '../panel/PanelPlugin';
+import { OptionsEditorItem, OptionsUIRegistryBuilder } from '../types/OptionsUIRegistryBuilder';
+import { FieldConfigEditorProps, FieldConfigPropertyItem, FieldConfigEditorConfig } from '../types/fieldOverrides';
+import { PanelOptionsEditorConfig, PanelOptionsEditorItem } from '../types/panel';
 
 /**
  * Fluent API for declarative creation of field config option editors
@@ -125,6 +125,35 @@ export class FieldConfigEditorBuilder<TOptions> extends OptionsUIRegistryBuilder
       editor: standardEditorsRegistry.get('unit').editor as any,
       override: standardEditorsRegistry.get('unit').editor as any,
       process: unitOverrideProcessor,
+      shouldApply: config.shouldApply ? config.shouldApply : () => true,
+      settings: config.settings || {},
+    });
+  }
+
+  addFieldNamePicker<TSettings = any>(
+    config: FieldConfigEditorConfig<TOptions, TSettings & FieldNamePickerConfigSettings, string>
+  ): this {
+    return this.addCustomEditor({
+      ...config,
+      id: config.path,
+      editor: standardEditorsRegistry.get('field-name').editor as any,
+      override: standardEditorsRegistry.get('field-name').editor as any,
+      process: identityOverrideProcessor,
+      shouldApply: config.shouldApply ? config.shouldApply : () => true,
+      settings: config.settings || {},
+    });
+  }
+
+  addGenericEditor<TSettings = any>(
+    config: FieldConfigEditorConfig<TOptions, TSettings & any>, // & any... i give up!
+    editor: (props: StandardEditorProps<TSettings>) => JSX.Element
+  ): this {
+    return this.addCustomEditor({
+      ...config,
+      id: config.path,
+      editor: editor as any,
+      override: editor as any,
+      process: identityOverrideProcessor,
       shouldApply: config.shouldApply ? config.shouldApply : () => true,
       settings: config.settings || {},
     });

@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/grafana/grafana/pkg/setting"
-	"github.com/grafana/grafana/pkg/util/errutil"
 	gomail "gopkg.in/mail.v2"
+
+	"github.com/grafana/grafana/pkg/setting"
 )
 
 type SmtpClient struct {
@@ -49,7 +49,7 @@ func (sc *SmtpClient) Send(messages ...*Message) (int, error) {
 				emailsSentFailed.Inc()
 			}
 
-			err = errutil.Wrapf(innerError, "Failed to send notification to email addresses: %s", strings.Join(msg.To, ";"))
+			err = fmt.Errorf("failed to send notification to email addresses: %s: %w", strings.Join(msg.To, ";"), innerError)
 			continue
 		}
 

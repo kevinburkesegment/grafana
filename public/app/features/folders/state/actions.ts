@@ -1,20 +1,23 @@
-import { AppEvents, locationUtil } from '@grafana/data';
-import { getBackendSrv, locationService } from '@grafana/runtime';
-import { backendSrv } from 'app/core/services/backend_srv';
-import { FolderState, ThunkResult } from 'app/types';
-import { DashboardAcl, DashboardAclUpdateDTO, NewDashboardAclItem, PermissionLevel } from 'app/types/acl';
-import { notifyApp, updateNavIndex } from 'app/core/actions';
-import { buildNavModel } from './navModel';
-import appEvents from 'app/core/app_events';
-import { loadFolder, loadFolderPermissions, setCanViewFolderPermissions } from './reducers';
 import { lastValueFrom } from 'rxjs';
-import { createWarningNotification } from 'app/core/copy/appNotification';
 
-export function getFolderByUid(uid: string): ThunkResult<void> {
+import { locationUtil } from '@grafana/data';
+import { getBackendSrv, isFetchError, locationService } from '@grafana/runtime';
+import { notifyApp, updateNavIndex } from 'app/core/actions';
+import { createSuccessNotification, createWarningNotification } from 'app/core/copy/appNotification';
+import { contextSrv } from 'app/core/core';
+import { backendSrv } from 'app/core/services/backend_srv';
+import { FolderDTO, FolderState, ThunkResult } from 'app/types';
+import { DashboardAcl, DashboardAclUpdateDTO, NewDashboardAclItem, PermissionLevel } from 'app/types/acl';
+
+import { buildNavModel } from './navModel';
+import { loadFolder, loadFolderPermissions, setCanViewFolderPermissions } from './reducers';
+
+export function getFolderByUid(uid: string): ThunkResult<Promise<FolderDTO>> {
   return async (dispatch) => {
     const folder = await backendSrv.getFolderByUid(uid);
     dispatch(loadFolder(folder));
     dispatch(updateNavIndex(buildNavModel(folder)));
+    return folder;
   };
 }
 
@@ -25,9 +28,9 @@ export function saveFolder(folder: FolderState): ThunkResult<void> {
       version: folder.version,
     });
 
-    // this should be redux action at some point
-    appEvents.emit(AppEvents.alertSuccess, ['Folder saved']);
-    locationService.push(`${res.url}/settings`);
+    dispatch(notifyApp(createSuccessNotification('Folder saved')));
+    dispatch(loadFolder(res));
+    locationService.push(locationUtil.stripBaseFromUrl(`${res.url}/settings`));
   };
 }
 
@@ -58,7 +61,7 @@ export function checkFolderPermissions(uid: string): ThunkResult<void> {
       );
       dispatch(setCanViewFolderPermissions(true));
     } catch (err) {
-      if (err.status !== 403) {
+      if (isFetchError(err) && err.status !== 403) {
         dispatch(notifyApp(createWarningNotification('Error checking folder permissions', err.data?.message)));
       }
 
@@ -88,7 +91,7 @@ export function updateFolderPermission(itemToUpdate: DashboardAcl, level: Permis
 
       const updated = toUpdateItem(item);
 
-      // if this is the item we want to update, update it's permission
+      // if this is the item we want to update, update its permission
       if (itemToUpdate === item) {
         updated.permission = level;
       }
@@ -142,10 +145,11 @@ export function addFolderPermission(newItem: NewDashboardAclItem): ThunkResult<v
   };
 }
 
-export function createNewFolder(folderName: string): ThunkResult<void> {
-  return async () => {
-    const newFolder = await getBackendSrv().post('/api/folders', { title: folderName });
-    appEvents.emit(AppEvents.alertSuccess, ['Folder Created', 'OK']);
+export function createNewFolder(folderName: string, uid?: string): ThunkResult<void> {
+  return async (dispatch) => {
+    const newFolder = await getBackendSrv().post('/api/folders', { title: folderName, parentUid: uid });
+    await contextSrv.fetchUserPermissions();
+    dispatch(notifyApp(createSuccessNotification('Folder Created', 'OK')));
     locationService.push(locationUtil.stripBaseFromUrl(newFolder.url));
   };
 }

@@ -1,24 +1,25 @@
-import React, { PureComponent, ChangeEvent } from 'react';
 import { css } from '@emotion/css';
+import { isNumber } from 'lodash';
+import React, { ChangeEvent, PureComponent } from 'react';
+
 import {
-  Threshold,
+  GrafanaTheme2,
+  SelectableValue,
   sortThresholds,
+  Threshold,
   ThresholdsConfig,
   ThresholdsMode,
-  SelectableValue,
-  GrafanaTheme,
 } from '@grafana/data';
-import { isNumber } from 'lodash';
 import {
-  Input,
-  colors,
-  ColorPicker,
-  Icon,
-  ThemeContext,
   Button,
+  ColorPicker,
+  colors,
+  IconButton,
+  Input,
   Label,
   RadioButtonGroup,
   stylesFactory,
+  ThemeContext,
 } from '@grafana/ui';
 
 const modes: Array<SelectableValue<ThresholdsMode>> = [
@@ -197,7 +198,12 @@ export class ThresholdsEditor extends PureComponent<Props, State> {
           </div>
         }
         suffix={
-          <Icon className={styles.trashIcon} name="trash-alt" onClick={() => this.onRemoveThreshold(threshold)} />
+          <IconButton
+            className={styles.trashIcon}
+            name="trash-alt"
+            onClick={() => this.onRemoveThreshold(threshold)}
+            tooltip={`Remove ${ariaLabel}`}
+          />
         }
       />
     );
@@ -210,7 +216,7 @@ export class ThresholdsEditor extends PureComponent<Props, State> {
     return (
       <ThemeContext.Consumer>
         {(theme) => {
-          const styles = getStyles(theme.v1);
+          const styles = getStyles(theme);
           return (
             <div className={styles.wrapper}>
               <Button
@@ -290,47 +296,46 @@ interface ThresholdStyles {
   trashIcon: string;
 }
 
-const getStyles = stylesFactory(
-  (theme: GrafanaTheme): ThresholdStyles => {
-    return {
-      wrapper: css`
-        display: flex;
-        flex-direction: column;
-      `,
-      thresholds: css`
-        display: flex;
-        flex-direction: column;
-        margin-bottom: ${theme.spacing.formSpacingBase * 2}px;
-      `,
-      item: css`
-        margin-bottom: ${theme.spacing.sm};
+const getStyles = stylesFactory((theme: GrafanaTheme2): ThresholdStyles => {
+  return {
+    wrapper: css`
+      display: flex;
+      flex-direction: column;
+    `,
+    thresholds: css`
+      display: flex;
+      flex-direction: column;
+      margin-bottom: ${theme.spacing(2)};
+    `,
+    item: css`
+      margin-bottom: ${theme.spacing(1)};
 
-        &:last-child {
-          margin-bottom: 0;
-        }
-      `,
-      colorPicker: css`
-        padding: 0 ${theme.spacing.sm};
-      `,
-      addButton: css`
-        margin-bottom: ${theme.spacing.sm};
-      `,
-      percentIcon: css`
-        font-size: ${theme.typography.size.sm};
-        color: ${theme.colors.textWeak};
-      `,
-      inputPrefix: css`
-        display: flex;
-        align-items: center;
-      `,
-      trashIcon: css`
-        color: ${theme.colors.textWeak};
-        cursor: pointer;
+      &:last-child {
+        margin-bottom: 0;
+      }
+    `,
+    colorPicker: css`
+      padding: 0 ${theme.spacing(1)};
+    `,
+    addButton: css`
+      margin-bottom: ${theme.spacing(1)};
+    `,
+    percentIcon: css`
+      font-size: ${theme.typography.bodySmall.fontSize};
+      color: ${theme.colors.text.secondary};
+    `,
+    inputPrefix: css`
+      display: flex;
+      align-items: center;
+    `,
+    trashIcon: css`
+      color: ${theme.colors.text.secondary};
+      cursor: pointer;
+      margin-right: 0;
 
-        &:hover {
-          color: ${theme.colors.text};
-        }
-      `,
-    };
-  }
-);
+      &:hover {
+        color: ${theme.colors.text};
+      }
+    `,
+  };
+});

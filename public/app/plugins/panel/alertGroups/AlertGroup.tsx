@@ -1,14 +1,14 @@
-import { AlertmanagerGroup, AlertState } from 'app/plugins/datasource/alertmanager/types';
+import { css } from '@emotion/css';
 import React, { useState, useEffect } from 'react';
+
 import { GrafanaTheme2, intervalToAbbreviatedDurationString } from '@grafana/data';
 import { useStyles2, LinkButton } from '@grafana/ui';
-import { css } from '@emotion/css';
-
 import { AlertLabels } from 'app/features/alerting/unified/components/AlertLabels';
-import { AlertGroupHeader } from 'app/features/alerting/unified/components/alert-groups/AlertGroupHeader';
 import { CollapseToggle } from 'app/features/alerting/unified/components/CollapseToggle';
+import { AlertGroupHeader } from 'app/features/alerting/unified/components/alert-groups/AlertGroupHeader';
 import { getNotificationsTextColors } from 'app/features/alerting/unified/styles/notifications';
 import { makeAMLink, makeLabelBasedSilenceLink } from 'app/features/alerting/unified/utils/misc';
+import { AlertmanagerGroup, AlertState } from 'app/plugins/datasource/alertmanager/types';
 
 type Props = {
   alertManagerSourceName: string;
@@ -26,7 +26,7 @@ export const AlertGroup = ({ alertManagerSourceName, group, expandAll }: Props) 
   return (
     <div className={styles.group} data-testid="alert-group">
       {Object.keys(group.labels).length > 0 ? (
-        <AlertLabels labels={group.labels} />
+        <AlertLabels labels={group.labels} size="sm" />
       ) : (
         <div className={styles.noGroupingText}>No grouping</div>
       )}
@@ -49,7 +49,7 @@ export const AlertGroup = ({ alertManagerSourceName, group, expandAll }: Props) 
                   <span className={textStyles[alert.status.state]}>{state} </span>for {interval}
                 </div>
                 <div>
-                  <AlertLabels labels={alert.labels} />
+                  <AlertLabels labels={alert.labels} size="sm" />
                 </div>
                 <div className={styles.actionsRow}>
                   {alert.status.state === AlertState.Suppressed && (
@@ -103,6 +103,7 @@ const getStyles = (theme: GrafanaTheme2) => ({
     display: flex;
     flex-direction: row;
     align-items: center;
+    gap: ${theme.spacing(1)};
   `,
   alerts: css`
     margin: ${theme.spacing(0, 2, 0, 4)};

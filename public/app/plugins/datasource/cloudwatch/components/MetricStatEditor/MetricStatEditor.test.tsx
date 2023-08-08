@@ -1,103 +1,148 @@
-import React from 'react';
-import { cleanup, fireEvent, render, screen, act } from '@testing-library/react';
-import selectEvent from 'react-select-event';
-import { setupMockedDataSource } from '../../__mocks__/CloudWatchDataSource';
-import '@testing-library/jest-dom';
-import { CloudWatchMetricsQuery } from '../../types';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MetricStatEditor } from '..';
+import React from 'react';
+import selectEvent from 'react-select-event';
 
+import { config } from '@grafana/runtime';
+
+import { MetricStatEditor } from '..';
+import { setupMockedDataSource, statisticVariable } from '../../__mocks__/CloudWatchDataSource';
+import { validMetricSearchBuilderQuery } from '../../__mocks__/queries';
+import { MetricStat } from '../../types';
+
+const originalFeatureToggleValue = config.featureToggles.cloudWatchCrossAccountQuerying;
 const ds = setupMockedDataSource({
-  variables: [],
+  variables: [statisticVariable],
 });
 
-ds.datasource.getNamespaces = jest.fn().mockResolvedValue([]);
-ds.datasource.getMetrics = jest.fn().mockResolvedValue([]);
-ds.datasource.getDimensionKeys = jest.fn().mockResolvedValue([]);
+ds.datasource.resources.getNamespaces = jest.fn().mockResolvedValue([]);
+ds.datasource.resources.getMetrics = jest.fn().mockResolvedValue([]);
+ds.datasource.resources.getDimensionKeys = jest.fn().mockResolvedValue([]);
 ds.datasource.getVariables = jest.fn().mockReturnValue([]);
-const q: CloudWatchMetricsQuery = {
-  id: '',
+const metricStat: MetricStat = {
   region: 'us-east-2',
   namespace: '',
-  period: '',
-  alias: '',
   metricName: '',
   dimensions: {},
-  matchExact: true,
   statistic: '',
-  expression: '',
-  refId: '',
+  matchExact: true,
 };
 
 const props = {
+  refId: 'A',
   datasource: ds.datasource,
-  query: q,
+  metricStat,
   onChange: jest.fn(),
-  onRunQuery: jest.fn(),
 };
 
-afterEach(cleanup);
-
 describe('MetricStatEditor', () => {
+  afterEach(() => {
+    config.featureToggles.cloudWatchCrossAccountQuerying = originalFeatureToggleValue;
+  });
   describe('statistics field', () => {
-    test.each([['Average', 'p23.23', 'p34', '$statistic']])('should accept valid values', (statistic) => {
+    test.each(['Average', 'p23.23', 'p34', '$statistic'])('should accept valid values', async (statistic) => {
       const onChange = jest.fn();
-      const onRunQuery = jest.fn();
-      props.datasource.getVariables = jest.fn().mockReturnValue(['$statistic']);
+      render(<MetricStatEditor {...props} onChange={onChange} />);
 
-      render(<MetricStatEditor {...props} onChange={onChange} onRunQuery={onRunQuery} />);
-
-      const statisticElement = screen.getByLabelText('Statistic');
+      const statisticElement = await screen.findByLabelText('Statistic');
       expect(statisticElement).toBeInTheDocument();
 
-      userEvent.type(statisticElement!, statistic);
-      fireEvent.keyDown(statisticElement!, { keyCode: 13 });
-      expect(onChange).toHaveBeenCalledWith({ ...props.query, statistic });
-      expect(onRunQuery).toHaveBeenCalled();
+      await userEvent.type(statisticElement, statistic);
+      fireEvent.keyDown(statisticElement, { keyCode: 13 });
+      expect(onChange).toHaveBeenCalledWith({ ...props.metricStat, statistic });
     });
 
-    test.each([['CustomStat', 'p23,23', '$statistic']])('should not accept invalid values', (statistic) => {
+    test.each(['CustomStat', 'p23,23', 'tc(80%:)', 'ts', 'wm', 'pr', 'tm', 'tm(10:90)', '$someUnknownValue'])(
+      'should not accept invalid values',
+      async (statistic) => {
+        const onChange = jest.fn();
+
+        render(<MetricStatEditor {...props} onChange={onChange} />);
+
+        const statisticElement = await screen.findByLabelText('Statistic');
+        expect(statisticElement).toBeInTheDocument();
+
+        await userEvent.type(statisticElement, statistic);
+        fireEvent.keyDown(statisticElement, { keyCode: 13 });
+        expect(onChange).not.toHaveBeenCalled();
+      }
+    );
+
+    test.each([
+      'IQM',
+      'tm90',
+      'tm23.23',
+      'TM(25%:75%)',
+      'TM(0.005:0.030)',
+      'TM(150:1000)',
+      'TM(:0.5)',
+      'TM(:95%)',
+      'wm98',
+      'wm23.23',
+      'WM(25%:75%)',
+      'WM(0.005:0.030)',
+      'WM(150:1000)',
+      'WM(:0.5)',
+      'PR(10:)',
+      'PR(:300)',
+      'PR(100:20000)',
+      'tc90',
+      'tc23.23',
+      'TC(0.005:0.030)',
+      'TC(:0.5)',
+      'TC(25%:75%)',
+      'TC(150:1000)',
+      'TC(:0.5)',
+      'ts90',
+      'ts23.23',
+      'TS(80%:)',
+    ])('should accept other valid statistics syntax', async (statistic) => {
       const onChange = jest.fn();
-      const onRunQuery = jest.fn();
+      render(<MetricStatEditor {...props} onChange={onChange} />);
 
-      render(<MetricStatEditor {...props} onChange={onChange} onRunQuery={onRunQuery} />);
-
-      const statisticElement = screen.getByLabelText('Statistic');
+      const statisticElement = await screen.findByLabelText('Statistic');
       expect(statisticElement).toBeInTheDocument();
 
-      userEvent.type(statisticElement!, statistic);
-      fireEvent.keyDown(statisticElement!, { keyCode: 13 });
-      expect(onChange).not.toHaveBeenCalled();
-      expect(onRunQuery).not.toHaveBeenCalled();
+      await userEvent.type(statisticElement, statistic);
+      fireEvent.keyDown(statisticElement, { keyCode: 13 });
+      expect(onChange).toHaveBeenCalledWith({ ...props.metricStat, statistic });
     });
   });
 
   describe('expressions', () => {
-    it('should display match exact switch is not set', () => {
+    it('should display match exact switch is not set', async () => {
       render(<MetricStatEditor {...props} />);
-      expect(screen.getByText('Match exact')).toBeInTheDocument();
+      expect(await screen.findByText('Match exact')).toBeInTheDocument();
     });
 
-    it('should display match exact switch if prop is set to false', () => {
+    it('should display match exact switch if prop is set to false', async () => {
       render(<MetricStatEditor {...props} disableExpressions={false} />);
-      expect(screen.getByText('Match exact')).toBeInTheDocument();
+      expect(await screen.findByText('Match exact')).toBeInTheDocument();
     });
 
     it('should not display match exact switch if prop is set to true', async () => {
       render(<MetricStatEditor {...props} disableExpressions={true} />);
-      expect(screen.queryByText('Match exact')).toBeNull();
+      await waitFor(() => {
+        expect(screen.queryByText('Match exact')).toBeNull();
+      });
     });
   });
 
   describe('match exact', () => {
-    it('should be checked when value is true', () => {
+    it('should be checked when value is true', async () => {
       render(<MetricStatEditor {...props} disableExpressions={false} />);
-      expect(screen.getByLabelText('Match exact - optional')).toBeChecked();
+      expect(await screen.findByLabelText('Match exact - optional')).toBeChecked();
     });
 
-    it('should be unchecked when value is false', () => {
-      render(<MetricStatEditor {...props} query={{ ...props.query, matchExact: false }} disableExpressions={false} />);
-      expect(screen.getByLabelText('Match exact - optional')).not.toBeChecked();
+    it('should be unchecked when value is false', async () => {
+      render(
+        <MetricStatEditor
+          {...props}
+          metricStat={{ ...props.metricStat, matchExact: false }}
+          disableExpressions={false}
+        />
+      );
+      expect(await screen.findByLabelText('Match exact - optional')).not.toBeChecked();
     });
   });
 
@@ -111,18 +156,15 @@ describe('MetricStatEditor', () => {
       { value: 'm2', label: 'm2', text: 'm2' },
     ];
     const onChange = jest.fn();
-    const onRunQuery = jest.fn();
     const propsNamespaceMetrics = {
       ...props,
       onChange,
-      onRunQuery,
     };
 
     beforeEach(() => {
-      propsNamespaceMetrics.datasource.getNamespaces = jest.fn().mockResolvedValue(namespaces);
-      propsNamespaceMetrics.datasource.getMetrics = jest.fn().mockResolvedValue(metrics);
+      propsNamespaceMetrics.datasource.resources.getNamespaces = jest.fn().mockResolvedValue(namespaces);
+      propsNamespaceMetrics.datasource.resources.getMetrics = jest.fn().mockResolvedValue(metrics);
       onChange.mockClear();
-      onRunQuery.mockClear();
     });
 
     it('should select namespace and metric name correctly', async () => {
@@ -135,28 +177,25 @@ describe('MetricStatEditor', () => {
       expect(namespaceSelect).toBeInTheDocument();
       expect(metricsSelect).toBeInTheDocument();
 
-      await selectEvent.select(namespaceSelect, 'n1');
-      await selectEvent.select(metricsSelect, 'm1');
+      await selectEvent.select(namespaceSelect, 'n1', { container: document.body });
+      await selectEvent.select(metricsSelect, 'm1', { container: document.body });
 
       expect(onChange.mock.calls).toEqual([
-        [{ ...propsNamespaceMetrics.query, namespace: 'n1' }], // First call, namespace select
-        [{ ...propsNamespaceMetrics.query, metricName: 'm1' }], // Second call, metric select
+        [{ ...propsNamespaceMetrics.metricStat, namespace: 'n1' }], // First call, namespace select
+        [{ ...propsNamespaceMetrics.metricStat, metricName: 'm1' }], // Second call, metric select
       ]);
-      expect(onRunQuery).toHaveBeenCalledTimes(2);
     });
 
-    it('should remove metricName from query if it does not exist in new namespace', async () => {
-      propsNamespaceMetrics.datasource.getMetrics = jest
-        .fn()
-        .mockImplementation((namespace: string, region: string) => {
-          let mockMetrics =
-            namespace === 'n1' && region === props.query.region
-              ? metrics
-              : [{ value: 'oldNamespaceMetric', label: 'oldNamespaceMetric', text: 'oldNamespaceMetric' }];
-          return Promise.resolve(mockMetrics);
-        });
-      propsNamespaceMetrics.query.metricName = 'oldNamespaceMetric';
-      propsNamespaceMetrics.query.namespace = 'n2';
+    it('should remove metricName from metricStat if it does not exist in new namespace', async () => {
+      propsNamespaceMetrics.datasource.resources.getMetrics = jest.fn().mockImplementation(({ namespace, region }) => {
+        let mockMetrics =
+          namespace === 'n1' && region === props.metricStat.region
+            ? metrics
+            : [{ value: 'oldNamespaceMetric', label: 'oldNamespaceMetric', text: 'oldNamespaceMetric' }];
+        return Promise.resolve(mockMetrics);
+      });
+      propsNamespaceMetrics.metricStat.metricName = 'oldNamespaceMetric';
+      propsNamespaceMetrics.metricStat.namespace = 'n2';
 
       await act(async () => {
         render(<MetricStatEditor {...propsNamespaceMetrics} />);
@@ -165,14 +204,14 @@ describe('MetricStatEditor', () => {
       expect(screen.getByText('n2')).toBeInTheDocument();
       expect(screen.getByText('oldNamespaceMetric')).toBeInTheDocument();
 
-      await selectEvent.select(namespaceSelect, 'n1');
+      await waitFor(() => selectEvent.select(namespaceSelect, 'n1', { container: document.body }));
 
-      expect(onChange.mock.calls).toEqual([[{ ...propsNamespaceMetrics.query, metricName: '', namespace: 'n1' }]]);
+      expect(onChange.mock.calls).toEqual([[{ ...propsNamespaceMetrics.metricStat, metricName: '', namespace: 'n1' }]]);
     });
 
-    it('should not remove metricName from query if it does exist in new namespace', async () => {
-      propsNamespaceMetrics.query.namespace = 'n1';
-      propsNamespaceMetrics.query.metricName = 'm1';
+    it('should not remove metricName from metricStat if it does exist in new namespace', async () => {
+      propsNamespaceMetrics.metricStat.namespace = 'n1';
+      propsNamespaceMetrics.metricStat.metricName = 'm1';
 
       await act(async () => {
         render(<MetricStatEditor {...propsNamespaceMetrics} />);
@@ -181,10 +220,71 @@ describe('MetricStatEditor', () => {
       expect(screen.getByText('n1')).toBeInTheDocument();
       expect(screen.getByText('m1')).toBeInTheDocument();
 
-      await selectEvent.select(namespaceSelect, 'n2');
+      await waitFor(() => selectEvent.select(namespaceSelect, 'n2', { container: document.body }));
 
       expect(onChange).toHaveBeenCalledTimes(1);
-      expect(onChange.mock.calls).toEqual([[{ ...propsNamespaceMetrics.query, metricName: 'm1', namespace: 'n2' }]]);
+      expect(onChange.mock.calls).toEqual([
+        [{ ...propsNamespaceMetrics.metricStat, metricName: 'm1', namespace: 'n2' }],
+      ]);
+    });
+  });
+
+  describe('metric value', () => {
+    it('should be displayed when a custom value is used and its value is not in the select options', async () => {
+      const expected = 'CPUUtilzation';
+      await act(async () => {
+        render(<MetricStatEditor {...props} metricStat={{ ...props.metricStat, metricName: expected }} />);
+      });
+      expect(await screen.findByText(expected)).toBeInTheDocument();
+    });
+  });
+
+  describe('account id', () => {
+    it('should set value to "all" when its a monitoring account and no account id is defined in the query', async () => {
+      config.featureToggles.cloudWatchCrossAccountQuerying = true;
+      const onChange = jest.fn();
+      props.datasource.resources.isMonitoringAccount = jest.fn().mockResolvedValue(true);
+      props.datasource.resources.getAccounts = jest.fn().mockResolvedValue([
+        {
+          value: '123456789',
+          label: 'test-account1',
+          description: '123456789',
+        },
+        {
+          value: '432156789013',
+          label: 'test-account2',
+          description: '432156789013',
+        },
+      ]);
+      await act(async () => {
+        render(
+          <MetricStatEditor
+            {...props}
+            metricStat={{ ...validMetricSearchBuilderQuery, accountId: undefined }}
+            onChange={onChange}
+          />
+        );
+      });
+      expect(onChange).toHaveBeenCalledWith({ ...validMetricSearchBuilderQuery, accountId: 'all' });
+      expect(await screen.findByText('Account')).toBeInTheDocument();
+    });
+
+    it('should unset value when no accounts were found and an account id is defined in the query', async () => {
+      config.featureToggles.cloudWatchCrossAccountQuerying = true;
+      const onChange = jest.fn();
+      props.datasource.resources.isMonitoringAccount = jest.fn().mockResolvedValue(false);
+      props.datasource.resources.getAccounts = jest.fn().mockResolvedValue([]);
+      await act(async () => {
+        render(
+          <MetricStatEditor
+            {...props}
+            metricStat={{ ...validMetricSearchBuilderQuery, accountId: '123456789' }}
+            onChange={onChange}
+          />
+        );
+      });
+      expect(onChange).toHaveBeenCalledWith({ ...validMetricSearchBuilderQuery, accountId: undefined });
+      expect(await screen.queryByText('Account')).not.toBeInTheDocument();
     });
   });
 });
