@@ -1,7 +1,5 @@
 import { chain } from 'lodash';
-import { getTimeSrv } from 'app/features/dashboard/services/TimeSrv';
-import { getTemplateSrv } from '@grafana/runtime';
-import { getConfig } from 'app/core/config';
+
 import {
   DataFrame,
   DataLink,
@@ -21,6 +19,11 @@ import {
   VariableSuggestion,
   VariableSuggestionsScope,
 } from '@grafana/data';
+import { getTemplateSrv } from '@grafana/runtime';
+import { VariableFormatID } from '@grafana/schema';
+import { getConfig } from 'app/core/config';
+import { getTimeSrv } from 'app/features/dashboard/services/TimeSrv';
+
 import { getVariablesUrlParams } from '../../variables/getAllVariableValuesForUrl';
 
 const timeRangeVars = [
@@ -242,7 +245,11 @@ export const getCalculationValueDataLinksVariableSuggestions = (dataFrames: Data
 
 export interface LinkService {
   getDataLinkUIModel: <T>(link: DataLink, replaceVariables: InterpolateFunction | undefined, origin: T) => LinkModel<T>;
-  getAnchorInfo: (link: any) => any;
+  getAnchorInfo: (link: any) => {
+    href: string;
+    title: string;
+    tooltip: string;
+  };
   getLinkUrl: (link: any) => string;
 }
 
@@ -270,11 +277,11 @@ export class LinkSrv implements LinkService {
 
   getAnchorInfo(link: any) {
     const templateSrv = getTemplateSrv();
-    const info: any = {};
-    info.href = this.getLinkUrl(link);
-    info.title = templateSrv.replace(link.title || '');
-    info.tooltip = templateSrv.replace(link.tooltip || '');
-    return info;
+    return {
+      href: this.getLinkUrl(link),
+      title: templateSrv.replace(link.title || ''),
+      tooltip: templateSrv.replace(link.tooltip || ''),
+    };
   }
 
   /**
@@ -302,7 +309,7 @@ export class LinkSrv implements LinkService {
     };
 
     if (replaceVariables) {
-      info.href = replaceVariables(info.href);
+      info.href = replaceVariables(info.href, undefined, VariableFormatID.UriEncode);
       info.title = replaceVariables(link.title);
     }
 

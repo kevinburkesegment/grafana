@@ -1,8 +1,18 @@
-+++
-title = "Legacy panel plugins"
-keywords = ["grafana", "plugins", "panel", "documentation"]
-aliases = ["/docs/grafana/latest/plugins/developing/panels/"]
-+++
+---
+aliases:
+  - ../../../plugins/developing/panels/
+description: Deprecated guide for Angular plugin development.
+keywords:
+  - grafana
+  - plugins
+  - panel
+  - documentation
+labels:
+  products:
+    - enterprise
+    - oss
+title: Legacy panel plugins
+---
 
 # Legacy panel plugins
 

@@ -1,11 +1,18 @@
-import React, { FC, useEffect, useState } from 'react';
-import { AccessControlAction, OrgUser, Role } from 'app/types';
-import { OrgRolePicker } from '../admin/OrgRolePicker';
-import { Button, ConfirmModal } from '@grafana/ui';
+import React, { useEffect, useState } from 'react';
+
 import { OrgRole } from '@grafana/data';
-import { contextSrv } from 'app/core/core';
-import { fetchBuiltinRoles, fetchRoleOptions } from 'app/core/components/RolePicker/api';
+import { Button, ConfirmModal, Icon, Tooltip } from '@grafana/ui';
 import { UserRolePicker } from 'app/core/components/RolePicker/UserRolePicker';
+import { fetchRoleOptions } from 'app/core/components/RolePicker/api';
+import { TagBadge } from 'app/core/components/TagFilter/TagBadge';
+import config from 'app/core/config';
+import { contextSrv } from 'app/core/core';
+import { AccessControlAction, OrgUser, Role } from 'app/types';
+
+import { OrgRolePicker } from '../admin/OrgRolePicker';
+
+const disabledRoleMessage = `This user's role is not editable because it is synchronized from your auth provider.
+  Refer to the Grafana authentication docs for details.`;
 
 export interface Props {
   users: OrgUser[];
@@ -14,11 +21,9 @@ export interface Props {
   onRemoveUser: (user: OrgUser) => void;
 }
 
-const UsersTable: FC<Props> = (props) => {
-  const { users, orgId, onRoleChange, onRemoveUser } = props;
+export const UsersTable = ({ users, orgId, onRoleChange, onRemoveUser }: Props) => {
   const [userToRemove, setUserToRemove] = useState<OrgUser | null>(null);
   const [roleOptions, setRoleOptions] = useState<Role[]>([]);
-  const [builtinRoles, setBuiltinRoles] = useState<{ [key: string]: Role[] }>({});
 
   useEffect(() => {
     async function fetchOptions() {
@@ -26,27 +31,15 @@ const UsersTable: FC<Props> = (props) => {
         if (contextSrv.hasPermission(AccessControlAction.ActionRolesList)) {
           let options = await fetchRoleOptions(orgId);
           setRoleOptions(options);
-        } else {
-          setRoleOptions([]);
-        }
-
-        if (contextSrv.hasPermission(AccessControlAction.ActionBuiltinRolesList)) {
-          const builtInRoles = await fetchBuiltinRoles(orgId);
-          setBuiltinRoles(builtInRoles);
-        } else {
-          setBuiltinRoles({});
         }
       } catch (e) {
         console.error('Error loading options');
       }
     }
-    if (contextSrv.accessControlEnabled()) {
+    if (contextSrv.licensedAccessControlEnabled()) {
       fetchOptions();
     }
   }, [orgId]);
-
-  const getRoleOptions = async () => roleOptions;
-  const getBuiltinRoles = async () => builtinRoles;
 
   return (
     <>
@@ -59,11 +52,23 @@ const UsersTable: FC<Props> = (props) => {
             <th>Name</th>
             <th>Seen</th>
             <th>Role</th>
+            <th />
             <th style={{ width: '34px' }} />
+            <th>Origin</th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
           {users.map((user, index) => {
+            let basicRoleDisabled = !contextSrv.hasPermissionInMetadata(AccessControlAction.OrgUsersWrite, user);
+            let authLabel = Array.isArray(user.authLabels) && user.authLabels.length > 0 ? user.authLabels[0] : '';
+            // A GCom specific feature toggle for role locking has been introduced, as the previous implementation had a bug with locking down external users synced through GCom (https://github.com/grafana/grafana/pull/72044)
+            // Remove this conditional once FlagGcomOnlyExternalOrgRoleSync feature toggle has been removed
+            if (authLabel !== 'grafana.com' || config.featureToggles.gcomOnlyExternalOrgRoleSync) {
+              const isUserSynced = user?.isExternallySynced;
+              basicRoleDisabled = isUserSynced || basicRoleDisabled;
+            }
+
             return (
               <tr key={`${user.userId}-${index}`}>
                 <td className="width-2 text-center">
@@ -88,28 +93,48 @@ const UsersTable: FC<Props> = (props) => {
                 <td className="width-1">{user.lastSeenAtAge}</td>
 
                 <td className="width-8">
-                  {contextSrv.accessControlEnabled() ? (
+                  {contextSrv.licensedAccessControlEnabled() ? (
                     <UserRolePicker
                       userId={user.userId}
                       orgId={orgId}
-                      builtInRole={user.role}
-                      onBuiltinRoleChange={(newRole) => onRoleChange(newRole, user)}
-                      getRoleOptions={getRoleOptions}
-                      getBuiltinRoles={getBuiltinRoles}
-                      disabled={!contextSrv.hasPermissionInMetadata(AccessControlAction.OrgUsersRoleUpdate, user)}
+                      roleOptions={roleOptions}
+                      basicRole={user.role}
+                      onBasicRoleChange={(newRole) => onRoleChange(newRole, user)}
+                      basicRoleDisabled={basicRoleDisabled}
+                      basicRoleDisabledMessage={disabledRoleMessage}
                     />
                   ) : (
                     <OrgRolePicker
                       aria-label="Role"
                       value={user.role}
-                      disabled={!contextSrv.hasPermissionInMetadata(AccessControlAction.OrgUsersRoleUpdate, user)}
+                      disabled={basicRoleDisabled}
                       onChange={(newRole) => onRoleChange(newRole, user)}
                     />
                   )}
                 </td>
 
+                <td>
+                  {basicRoleDisabled && (
+                    <div style={{ display: 'flex', alignItems: 'center' }}>
+                      <Tooltip content={disabledRoleMessage}>
+                        <Icon name="question-circle" style={{ marginLeft: '8px' }} />
+                      </Tooltip>
+                    </div>
+                  )}
+                </td>
+
+                <td className="width-1 text-center">
+                  {user.isDisabled && <span className="label label-tag label-tag--gray">Disabled</span>}
+                </td>
+
+                <td className="width-1">
+                  {Array.isArray(user.authLabels) && user.authLabels.length > 0 && (
+                    <TagBadge label={user.authLabels[0]} removeIcon={false} count={0} />
+                  )}
+                </td>
+
                 {contextSrv.hasPermissionInMetadata(AccessControlAction.OrgUsersRemove, user) && (
-                  <td>
+                  <td className="text-right">
                     <Button
                       size="sm"
                       variant="destructive"
@@ -147,5 +172,3 @@ const UsersTable: FC<Props> = (props) => {
     </>
   );
 };
-
-export default UsersTable;

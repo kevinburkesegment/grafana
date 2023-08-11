@@ -1,7 +1,6 @@
 package mysql
 
 import (
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -9,6 +8,7 @@ import (
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/backend/gtime"
 	"github.com/grafana/grafana/pkg/infra/log"
+	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/tsdb/sqleng"
 )
 
@@ -19,18 +19,23 @@ var restrictedRegExp = regexp.MustCompile(`(?im)([\s]*show[\s]+grants|[\s,]sessi
 
 type mySQLMacroEngine struct {
 	*sqleng.SQLMacroEngineBase
-	logger log.Logger
+	logger    log.Logger
+	userError string
 }
 
-func newMysqlMacroEngine(logger log.Logger) sqleng.SQLMacroEngine {
-	return &mySQLMacroEngine{SQLMacroEngineBase: sqleng.NewSQLMacroEngineBase(), logger: logger}
+func newMysqlMacroEngine(logger log.Logger, cfg *setting.Cfg) sqleng.SQLMacroEngine {
+	return &mySQLMacroEngine{
+		SQLMacroEngineBase: sqleng.NewSQLMacroEngineBase(),
+		logger:             logger,
+		userError:          cfg.UserFacingDefaultError,
+	}
 }
 
 func (m *mySQLMacroEngine) Interpolate(query *backend.DataQuery, timeRange backend.TimeRange, sql string) (string, error) {
 	matches := restrictedRegExp.FindAllStringSubmatch(sql, 1)
 	if len(matches) > 0 {
 		m.logger.Error("show grants, session_user(), current_user(), system_user() or user() not allowed in query")
-		return "", errors.New("invalid query - inspect Grafana server log for details")
+		return "", fmt.Errorf("invalid query - %s", m.userError)
 	}
 
 	// TODO: Handle error
@@ -68,7 +73,9 @@ func (m *mySQLMacroEngine) evaluateMacro(timeRange backend.TimeRange, query *bac
 		if len(args) == 0 {
 			return "", fmt.Errorf("missing time column argument for macro %v", name)
 		}
-
+		if timeRange.From.UTC().Unix() < 0 {
+			return fmt.Sprintf("%s BETWEEN DATE_ADD(FROM_UNIXTIME(0), INTERVAL %d SECOND) AND FROM_UNIXTIME(%d)", args[0], timeRange.From.UTC().Unix(), timeRange.To.UTC().Unix()), nil
+		}
 		return fmt.Sprintf("%s BETWEEN FROM_UNIXTIME(%d) AND FROM_UNIXTIME(%d)", args[0], timeRange.From.UTC().Unix(), timeRange.To.UTC().Unix()), nil
 	case "__timeFrom":
 		return fmt.Sprintf("FROM_UNIXTIME(%d)", timeRange.From.UTC().Unix()), nil

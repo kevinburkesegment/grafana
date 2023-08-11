@@ -226,11 +226,11 @@ func perFloat(e *State, val Value, floatF func(x float64) float64) (Value, error
 			if f != nil {
 				nF = floatF(*f)
 			}
-			if err := newSeries.SetPoint(i, t, &nF); err != nil {
-				return newSeries, err
-			}
+			newSeries.SetPoint(i, t, &nF)
 		}
 		newVal = newSeries
+	case parse.TypeNoData:
+		newVal = NewNoData()
 	default:
 		// TODO: Should we deal with TypeString, TypeVariantSet?
 	}
@@ -257,11 +257,11 @@ func perNullableFloat(e *State, val Value, floatF func(x *float64) *float64) (Va
 		newSeries := NewSeries(e.RefID, resSeries.GetLabels(), resSeries.Len())
 		for i := 0; i < resSeries.Len(); i++ {
 			t, f := resSeries.GetPoint(i)
-			if err := newSeries.SetPoint(i, t, floatF(f)); err != nil {
-				return newSeries, err
-			}
+			newSeries.SetPoint(i, t, floatF(f))
 		}
 		newVal = newSeries
+	case parse.TypeNoData:
+		newVal = NewNoData()
 	default:
 		// TODO: Should we deal with TypeString, TypeVariantSet?
 	}

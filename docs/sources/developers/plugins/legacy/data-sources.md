@@ -1,8 +1,17 @@
-+++
-title = "Legacy data source plugins"
-keywords = ["grafana", "plugins", "documentation"]
-aliases = ["/docs/grafana/latest/plugins/developing/datasources/"]
-+++
+---
+aliases:
+  - ../../../plugins/developing/datasources/
+description: Deprecated guide for Angular plugin development.
+keywords:
+  - grafana
+  - plugins
+  - documentation
+labels:
+  products:
+    - enterprise
+    - oss
+title: Legacy data source plugins
+---
 
 # Legacy data source plugins
 

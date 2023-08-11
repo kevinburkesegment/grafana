@@ -1,10 +1,51 @@
-import { FieldType, MutableDataFrame } from '@grafana/data';
-import { createTableFrame, transformToOTLP, transformFromOTLP } from './resultTransformer';
-import { otlpDataFrameToResponse, otlpDataFrameFromResponse, otlpResponse } from './testResponse';
 import { collectorTypes } from '@opentelemetry/exporter-collector';
 
+import {
+  FieldType,
+  createDataFrame,
+  PluginType,
+  DataSourceInstanceSettings,
+  dateTime,
+  PluginMetaInfo,
+} from '@grafana/data';
+
+import {
+  createTableFrame,
+  transformToOTLP,
+  transformFromOTLP,
+  createTableFrameFromSearch,
+  createTableFrameFromTraceQlQuery,
+} from './resultTransformer';
+import {
+  badOTLPResponse,
+  otlpDataFrameToResponse,
+  otlpDataFrameFromResponse,
+  otlpResponse,
+  tempoSearchResponse,
+  traceQlResponse,
+} from './testResponse';
+import { TraceSearchMetadata } from './types';
+
+const defaultSettings: DataSourceInstanceSettings = {
+  id: 0,
+  uid: '0',
+  type: 'tracing',
+  name: 'tempo',
+  access: 'proxy',
+  meta: {
+    id: 'tempo',
+    name: 'tempo',
+    type: PluginType.datasource,
+    info: {} as PluginMetaInfo,
+    module: '',
+    baseUrl: '',
+  },
+  readOnly: false,
+  jsonData: {},
+};
+
 describe('transformTraceList()', () => {
-  const lokiDataFrame = new MutableDataFrame({
+  const lokiDataFrame = createDataFrame({
     fields: [
       {
         name: 'ts',
@@ -29,12 +70,12 @@ describe('transformTraceList()', () => {
   test('extracts traceIDs from log lines', () => {
     const frame = createTableFrame(lokiDataFrame, 't1', 'tempo', ['traceID=(\\w+)', 'traceID=(\\w\\w)']);
     expect(frame.fields[0].name).toBe('Time');
-    expect(frame.fields[0].values.get(0)).toBe('2020-02-12T15:05:15.265Z');
+    expect(frame.fields[0].values[0]).toBe('2020-02-12T15:05:15.265Z');
     expect(frame.fields[1].name).toBe('traceID');
-    expect(frame.fields[1].values.get(0)).toBe('asdfa1234');
+    expect(frame.fields[1].values[0]).toBe('asdfa1234');
     // Second match in new line
-    expect(frame.fields[0].values.get(1)).toBe('2020-02-12T15:05:15.265Z');
-    expect(frame.fields[1].values.get(1)).toBe('as');
+    expect(frame.fields[0].values[1]).toBe('2020-02-12T15:05:15.265Z');
+    expect(frame.fields[1].values[1]).toBe('as');
   });
 });
 
@@ -48,9 +89,136 @@ describe('transformToOTLP()', () => {
 describe('transformFromOTLP()', () => {
   test('transforms OTLP format to dataFrame', () => {
     const res = transformFromOTLP(
-      (otlpResponse.batches as unknown) as collectorTypes.opentelemetryProto.trace.v1.ResourceSpans[],
+      otlpResponse.batches as unknown as collectorTypes.opentelemetryProto.trace.v1.ResourceSpans[],
       false
     );
-    expect(res.data[0]).toMatchObject(otlpDataFrameFromResponse);
+    expect(res.data[0]).toMatchObject({
+      ...otlpDataFrameFromResponse,
+      creator: expect.any(Function),
+    });
+  });
+});
+
+describe('createTableFrameFromSearch()', () => {
+  const mockTimeUnix = dateTime(1643357709095).valueOf();
+  global.Date.now = jest.fn(() => mockTimeUnix);
+  test('transforms search response to dataFrame', () => {
+    const frame = createTableFrameFromSearch(tempoSearchResponse.traces as TraceSearchMetadata[], defaultSettings);
+    expect(frame.fields[0].name).toBe('traceID');
+    expect(frame.fields[0].values[0]).toBe('e641dcac1c3a0565');
+
+    // TraceID must have unit = 'string' to prevent the ID from rendering as Infinity
+    expect(frame.fields[0].config.unit).toBe('string');
+
+    expect(frame.fields[1].name).toBe('traceName');
+    expect(frame.fields[1].values[0]).toBe('c10d7ca4e3a00354 ');
+
+    expect(frame.fields[2].name).toBe('startTime');
+    expect(frame.fields[2].values[0]).toBe('2022-01-28 03:00:28');
+    expect(frame.fields[2].values[1]).toBe('2022-01-27 22:56:06');
+
+    expect(frame.fields[3].name).toBe('traceDuration');
+    expect(frame.fields[3].values[0]).toBe(65);
+  });
+});
+
+describe('createTableFrameFromTraceQlQuery()', () => {
+  test('transforms TraceQL response to DataFrame', () => {
+    const frameList = createTableFrameFromTraceQlQuery(traceQlResponse.traces, defaultSettings);
+    const frame = frameList[0];
+    // Trace ID field
+    expect(frame.fields[0].name).toBe('traceID');
+    expect(frame.fields[0].values[0]).toBe('b1586c3c8c34d');
+    expect(frame.fields[0].config.unit).toBe('string');
+    // Start time field
+    expect(frame.fields[1].name).toBe('startTime');
+    expect(frame.fields[1].type).toBe('string');
+    expect(frame.fields[1].values[1]).toBe('2022-01-27 22:56:06');
+    // Trace name field
+    expect(frame.fields[2].name).toBe('traceName');
+    expect(frame.fields[2].type).toBe('string');
+    expect(frame.fields[2].values[0]).toBe('lb HTTP Client');
+    // Duration field
+    expect(frame.fields[3].name).toBe('traceDuration');
+    expect(frame.fields[3].type).toBe('number');
+    expect(frame.fields[3].values[2]).toBe(44);
+    // Subframes field
+    expect(frame.fields[4].name).toBe('nested');
+    expect(frame.fields[4].type).toBe('nestedFrames');
+    // Single spanset
+    expect(frame.fields[4].values[0][0].fields[0].name).toBe('traceIdHidden');
+    expect(frame.fields[4].values[0][0].fields[0].values[0]).toBe('b1586c3c8c34d');
+    expect(frame.fields[4].values[0][0].fields[1].name).toBe('spanID');
+    expect(frame.fields[4].values[0][0].fields[1].values[0]).toBe('162a4adae63b61f1');
+    expect(frame.fields[4].values[0][0].fields[2].name).toBe('spanStartTime');
+    expect(frame.fields[4].values[0][0].fields[2].values[0]).toBe('2022-10-19 09:03:34');
+    expect(frame.fields[4].values[0][0].fields[4].name).toBe('http.method');
+    expect(frame.fields[4].values[0][0].fields[4].values[0]).toBe('GET');
+    expect(frame.fields[4].values[0][0].fields[5].name).toBe('service.name');
+    expect(frame.fields[4].values[0][0].fields[5].values[0]).toBe('db');
+    expect(frame.fields[4].values[0][0].fields[6].name).toBe('duration');
+    expect(frame.fields[4].values[0][0].fields[6].values[0]).toBe(545000);
+    // Multiple spansets - set 0
+    expect(frame.fields[4].values[1][0].fields[0].name).toBe('traceIdHidden');
+    expect(frame.fields[4].values[1][0].fields[0].values[0]).toBe('9161e77388f3e');
+    expect(frame.fields[4].values[1][0].fields[1].name).toBe('spanID');
+    expect(frame.fields[4].values[1][0].fields[1].values[0]).toBe('3b9a5c222d3ddd8f');
+    expect(frame.fields[4].values[1][0].fields[2].name).toBe('spanStartTime');
+    expect(frame.fields[4].values[1][0].fields[2].values[0]).toBe('2022-10-19 08:57:55');
+    expect(frame.fields[4].values[1][0].fields[4].name).toBe('by(resource.service.name)');
+    expect(frame.fields[4].values[1][0].fields[4].values[0]).toBe('db');
+    expect(frame.fields[4].values[1][0].fields[5].name).toBe('http.method');
+    expect(frame.fields[4].values[1][0].fields[5].values[0]).toBe('GET');
+    expect(frame.fields[4].values[1][0].fields[6].name).toBe('service.name');
+    expect(frame.fields[4].values[1][0].fields[6].values[0]).toBe('db');
+    expect(frame.fields[4].values[1][0].fields[7].name).toBe('duration');
+    expect(frame.fields[4].values[1][0].fields[7].values[0]).toBe(877000);
+    // Multiple spansets - set 1
+    expect(frame.fields[4].values[1][1].fields[0].name).toBe('traceIdHidden');
+    expect(frame.fields[4].values[1][1].fields[0].values[0]).toBe('9161e77388f3e');
+    expect(frame.fields[4].values[1][1].fields[1].name).toBe('spanID');
+    expect(frame.fields[4].values[1][1].fields[1].values[0]).toBe('894d90db6b5807f');
+    expect(frame.fields[4].values[1][1].fields[2].name).toBe('spanStartTime');
+    expect(frame.fields[4].values[1][1].fields[2].values[0]).toBe('2022-10-19 08:57:55');
+    expect(frame.fields[4].values[1][1].fields[4].name).toBe('by(resource.service.name)');
+    expect(frame.fields[4].values[1][1].fields[4].values[0]).toBe('app');
+    expect(frame.fields[4].values[1][1].fields[5].name).toBe('http.method');
+    expect(frame.fields[4].values[1][1].fields[5].values[0]).toBe('GET');
+    expect(frame.fields[4].values[1][1].fields[6].name).toBe('service.name');
+    expect(frame.fields[4].values[1][1].fields[6].values[0]).toBe('app');
+    expect(frame.fields[4].values[1][1].fields[7].name).toBe('duration');
+    expect(frame.fields[4].values[1][1].fields[7].values[0]).toBe(11073000);
+  });
+});
+
+describe('transformFromOTLP()', () => {
+  // Mock the console error so that running the test suite doesnt throw the error
+  const origError = console.error;
+  const consoleErrorMock = jest.fn();
+  afterEach(() => (console.error = origError));
+  beforeEach(() => (console.error = consoleErrorMock));
+
+  test('if passed bad data, will surface an error', () => {
+    const res = transformFromOTLP(
+      badOTLPResponse.batches as unknown as collectorTypes.opentelemetryProto.trace.v1.ResourceSpans[],
+      false
+    );
+
+    expect(res.data[0]).toBeFalsy();
+    expect(res.error?.message).toBeTruthy();
+    // if it does have resources, no error will be thrown
+    expect({
+      ...res.data[0],
+      resources: {
+        attributes: [
+          { key: 'service.name', value: { stringValue: 'db' } },
+          { key: 'job', value: { stringValue: 'tns/db' } },
+          { key: 'opencensus.exporterversion', value: { stringValue: 'Jaeger-Go-2.22.1' } },
+          { key: 'host.name', value: { stringValue: '63d16772b4a2' } },
+          { key: 'ip', value: { stringValue: '0.0.0.0' } },
+          { key: 'client-uuid', value: { stringValue: '39fb01637a579639' } },
+        ],
+      },
+    }).not.toBeFalsy();
   });
 });

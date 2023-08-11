@@ -1,9 +1,11 @@
-import React from 'react';
 import { css } from '@emotion/css';
+import React from 'react';
 import AutoSizer from 'react-virtualized-auto-sizer';
-import { TableCellDisplayMode, useStyles2 } from '@grafana/ui';
-import { PanelRenderer } from '@grafana/runtime';
+
 import { FieldConfigSource, FieldMatcherID, GrafanaTheme2, LoadingState } from '@grafana/data';
+import { PanelRenderer } from '@grafana/runtime';
+import { TableCellDisplayMode, useStyles2 } from '@grafana/ui';
+
 import { PreviewRuleResponse } from '../../types/preview';
 import { RuleFormType } from '../../types/rule-form';
 import { messageFromError } from '../../utils/redux';
@@ -82,7 +84,7 @@ function getStyles(theme: GrafanaTheme2) {
       height: 135px;
       margin-top: ${theme.spacing(2)};
       border: 1px solid ${theme.colors.border.medium};
-      border-radius: ${theme.shape.borderRadius(1)};
+      border-radius: ${theme.shape.radius.default};
     `,
   };
 }

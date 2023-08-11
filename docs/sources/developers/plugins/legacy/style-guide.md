@@ -1,7 +1,13 @@
-+++
-title = "Legacy code style guide"
-aliases = ["/docs/grafana/latest/plugins/developing/code-styleguide/"]
-+++
+---
+aliases:
+  - ../../../plugins/developing/code-styleguide/
+description: Deprecated guide for Angular plugin development.
+labels:
+  products:
+    - enterprise
+    - oss
+title: Legacy code style guide
+---
 
 # Legacy code style guide
 

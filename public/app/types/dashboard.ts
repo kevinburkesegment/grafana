@@ -1,6 +1,8 @@
-import { DashboardAcl } from './acl';
 import { DataQuery } from '@grafana/data';
+import { Dashboard, DataSourceRef } from '@grafana/schema';
 import { DashboardModel } from 'app/features/dashboard/state/DashboardModel';
+
+import { DashboardAcl } from './acl';
 
 export interface DashboardDTO {
   redirectUri?: string;
@@ -8,7 +10,18 @@ export interface DashboardDTO {
   meta: DashboardMeta;
 }
 
+export interface SaveDashboardResponseDTO {
+  id: number;
+  slug: string;
+  status: string;
+  uid: string;
+  url: string;
+  version: number;
+}
+
 export interface DashboardMeta {
+  slug?: string;
+  uid?: string;
   canSave?: boolean;
   canEdit?: boolean;
   canDelete?: boolean;
@@ -18,14 +31,13 @@ export interface DashboardMeta {
   url?: string;
   folderId?: number;
   folderUid?: string;
-  fromExplore?: boolean;
   canMakeEditable?: boolean;
-  submenuEnabled?: boolean;
   provisioned?: boolean;
   provisionedExternalId?: string;
   isStarred?: boolean;
   showSettings?: boolean;
   expires?: string;
+  isFolder?: boolean;
   isSnapshot?: boolean;
   folderTitle?: string;
   folderUrl?: string;
@@ -36,17 +48,39 @@ export interface DashboardMeta {
   fromScript?: boolean;
   fromFile?: boolean;
   hasUnsavedFolderChange?: boolean;
+  annotationsPermissions?: AnnotationsPermissions;
+  publicDashboardAccessToken?: string;
+  publicDashboardUid?: string;
+  publicDashboardEnabled?: boolean;
+  dashboardNotFound?: boolean;
 }
 
-export interface DashboardDataDTO {
+export interface AnnotationActions {
+  canAdd: boolean;
+  canEdit: boolean;
+  canDelete: boolean;
+}
+
+export interface AnnotationsPermissions {
+  dashboard: AnnotationActions;
+  organization: AnnotationActions;
+}
+
+// FIXME: This should not override Dashboard types
+export interface DashboardDataDTO extends Dashboard {
   title: string;
+  uid: string;
+  panels?: any[];
 }
 
 export enum DashboardRoutes {
   Home = 'home-dashboard',
   New = 'new-dashboard',
   Normal = 'normal-dashboard',
+  Path = 'path-dashboard',
   Scripted = 'scripted-dashboard',
+  Public = 'public-dashboard',
+  Embedded = 'embedded-dashboard',
 }
 
 export enum DashboardInitPhase {
@@ -59,11 +93,10 @@ export enum DashboardInitPhase {
 
 export interface DashboardInitError {
   message: string;
-  error: any;
+  error: unknown;
 }
 
 export enum KioskMode {
-  Off = 'off',
   TV = 'tv',
   Full = 'full',
 }
@@ -78,8 +111,7 @@ export interface QueriesToUpdateOnDashboardLoad {
 export interface DashboardState {
   getModel: GetMutableDashboardModelFn;
   initPhase: DashboardInitPhase;
-  isInitSlow: boolean;
+  initialDatasource?: DataSourceRef['uid'];
   initError: DashboardInitError | null;
   permissions: DashboardAcl[];
-  modifiedQueries: QueriesToUpdateOnDashboardLoad | null;
 }

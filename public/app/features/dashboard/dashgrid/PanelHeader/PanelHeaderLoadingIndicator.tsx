@@ -1,18 +1,21 @@
-import React, { FC } from 'react';
 import { css } from '@emotion/css';
-import { GrafanaTheme, LoadingState } from '@grafana/data';
-import { Icon, Tooltip, useStyles } from '@grafana/ui';
+import React from 'react';
+
+import { GrafanaTheme2, LoadingState } from '@grafana/data';
+import { Icon, Tooltip, useStyles2 } from '@grafana/ui';
 
 interface Props {
   state: LoadingState;
   onClick: () => void;
 }
 
-export const PanelHeaderLoadingIndicator: FC<Props> = ({ state, onClick }) => {
-  const styles = useStyles(getStyles);
+export const PanelHeaderLoadingIndicator = ({ state, onClick }: Props) => {
+  const styles = useStyles2(getStyles);
 
   if (state === LoadingState.Loading) {
     return (
+      // TODO: fix keyboard a11y
+      // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
       <div className="panel-loading" onClick={onClick}>
         <Tooltip content="Cancel query">
           <Icon className="panel-loading__spinner spin-clockwise" name="sync" />
@@ -23,6 +26,8 @@ export const PanelHeaderLoadingIndicator: FC<Props> = ({ state, onClick }) => {
 
   if (state === LoadingState.Streaming) {
     return (
+      // TODO: fix keyboard a11y
+      // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
       <div className="panel-loading" onClick={onClick}>
         <div title="Streaming (click to stop)" className={styles.streamIndicator} />
       </div>
@@ -32,14 +37,14 @@ export const PanelHeaderLoadingIndicator: FC<Props> = ({ state, onClick }) => {
   return null;
 };
 
-function getStyles(theme: GrafanaTheme) {
+function getStyles(theme: GrafanaTheme2) {
   return {
     streamIndicator: css`
       width: 10px;
       height: 10px;
-      background: ${theme.colors.textFaint};
-      box-shadow: 0 0 2px ${theme.colors.textFaint};
-      border-radius: 50%;
+      background: ${theme.colors.text.disabled};
+      box-shadow: 0 0 2px ${theme.colors.text.disabled};
+      border-radius: ${theme.shape.radius.circle};
       position: relative;
       top: 6px;
       right: 1px;

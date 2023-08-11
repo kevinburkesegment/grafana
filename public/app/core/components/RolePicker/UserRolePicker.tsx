@@ -1,75 +1,103 @@
-import React, { FC, useState } from 'react';
-import { useAsync } from 'react-use';
+import React, { useEffect } from 'react';
+import { useAsyncFn } from 'react-use';
+
 import { contextSrv } from 'app/core/core';
 import { Role, OrgRole, AccessControlAction } from 'app/types';
+
 import { RolePicker } from './RolePicker';
-import { fetchBuiltinRoles, fetchRoleOptions, fetchUserRoles, updateUserRoles } from './api';
+import { fetchUserRoles, updateUserRoles } from './api';
 
 export interface Props {
-  builtInRole: OrgRole;
+  basicRole: OrgRole;
   userId: number;
   orgId?: number;
-  onBuiltinRoleChange: (newRole: OrgRole) => void;
-  getRoleOptions?: () => Promise<Role[]>;
-  getBuiltinRoles?: () => Promise<{ [key: string]: Role[] }>;
+  onBasicRoleChange: (newRole: OrgRole) => void;
+  roleOptions: Role[];
   disabled?: boolean;
-  builtinRolesDisabled?: boolean;
+  basicRoleDisabled?: boolean;
+  basicRoleDisabledMessage?: string;
+  /**
+   * Set whether the component should send a request with the new roles to the
+   * backend in UserRolePicker.onRolesChange (apply=false), or call {@link onApplyRoles}
+   * with the updated list of roles (apply=true).
+   *
+   * Besides it sets the RolePickerMenu's Button title to
+   *   * `Update` in case apply equals false
+   *   * `Apply` in case apply equals true
+   *
+   * @default false
+   */
+  apply?: boolean;
+  onApplyRoles?: (newRoles: Role[], userId: number, orgId: number | undefined) => void;
+  pendingRoles?: Role[];
+  maxWidth?: string | number;
 }
 
-export const UserRolePicker: FC<Props> = ({
-  builtInRole,
+export const UserRolePicker = ({
+  basicRole,
   userId,
   orgId,
-  onBuiltinRoleChange,
-  getRoleOptions,
-  getBuiltinRoles,
+  onBasicRoleChange,
+  roleOptions,
   disabled,
-  builtinRolesDisabled,
-}) => {
-  const [roleOptions, setRoleOptions] = useState<Role[]>([]);
-  const [appliedRoles, setAppliedRoles] = useState<Role[]>([]);
-  const [builtInRoles, setBuiltinRoles] = useState<Record<string, Role[]>>({});
-
-  const { loading } = useAsync(async () => {
+  basicRoleDisabled,
+  basicRoleDisabledMessage,
+  apply = false,
+  onApplyRoles,
+  pendingRoles,
+  maxWidth,
+}: Props) => {
+  const [{ loading, value: appliedRoles = [] }, getUserRoles] = useAsyncFn(async () => {
     try {
-      if (contextSrv.hasPermission(AccessControlAction.ActionRolesList)) {
-        let options = await (getRoleOptions ? getRoleOptions() : fetchRoleOptions(orgId));
-        setRoleOptions(options.filter((option) => !option.name?.startsWith('managed:')));
-      } else {
-        setRoleOptions([]);
-      }
-
-      if (contextSrv.hasPermission(AccessControlAction.ActionBuiltinRolesList)) {
-        const builtInRoles = await (getBuiltinRoles ? getBuiltinRoles() : fetchBuiltinRoles(orgId));
-        setBuiltinRoles(builtInRoles);
-      } else {
-        setBuiltinRoles({});
+      if (apply && Boolean(pendingRoles?.length)) {
+        return pendingRoles;
       }
 
       if (contextSrv.hasPermission(AccessControlAction.ActionUserRolesList)) {
-        const userRoles = await fetchUserRoles(userId, orgId);
-        setAppliedRoles(userRoles);
-      } else {
-        setAppliedRoles([]);
+        return await fetchUserRoles(userId, orgId);
       }
     } catch (e) {
       // TODO handle error
       console.error('Error loading options');
     }
-  }, [getBuiltinRoles, getRoleOptions, orgId, userId]);
+    return [];
+  }, [orgId, userId, pendingRoles]);
+
+  useEffect(() => {
+    // only load roles when there is an Org selected
+    if (orgId) {
+      getUserRoles();
+    }
+  }, [orgId, getUserRoles, pendingRoles]);
+
+  const onRolesChange = async (roles: Role[]) => {
+    if (!apply) {
+      await updateUserRoles(roles, userId, orgId);
+      await getUserRoles();
+    } else if (onApplyRoles) {
+      onApplyRoles(roles, userId, orgId);
+    }
+  };
+
+  const canUpdateRoles =
+    contextSrv.hasPermission(AccessControlAction.ActionUserRolesAdd) &&
+    contextSrv.hasPermission(AccessControlAction.ActionUserRolesRemove);
 
   return (
     <RolePicker
-      builtInRole={builtInRole}
-      onRolesChange={(roles) => updateUserRoles(roles, userId, orgId)}
-      onBuiltinRoleChange={onBuiltinRoleChange}
-      roleOptions={roleOptions}
       appliedRoles={appliedRoles}
-      builtInRoles={builtInRoles}
+      basicRole={basicRole}
+      onRolesChange={onRolesChange}
+      onBasicRoleChange={onBasicRoleChange}
+      roleOptions={roleOptions}
       isLoading={loading}
       disabled={disabled}
-      builtinRolesDisabled={builtinRolesDisabled}
-      showBuiltInRole
+      basicRoleDisabled={basicRoleDisabled}
+      basicRoleDisabledMessage={basicRoleDisabledMessage}
+      showBasicRole
+      apply={apply}
+      canUpdateRoles={canUpdateRoles}
+      maxWidth={maxWidth}
     />
   );
 };

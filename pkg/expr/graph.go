@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
-	"github.com/grafana/grafana/pkg/expr/mathexp"
-
+	"go.opentelemetry.io/otel/attribute"
 	"gonum.org/v1/gonum/graph/simple"
 	"gonum.org/v1/gonum/graph/topo"
+
+	"github.com/grafana/grafana/pkg/expr/mathexp"
+	"github.com/grafana/grafana/pkg/services/featuremgmt"
 )
 
 // NodeType is the type of a DPNode. Currently either a expression command or datasource query.
@@ -19,6 +22,8 @@ const (
 	TypeCMDNode NodeType = iota
 	// TypeDatasourceNode is a NodeType for datasource queries.
 	TypeDatasourceNode
+	// TypeMLNode is a NodeType for Machine Learning queries.
+	TypeMLNode
 )
 
 func (nt NodeType) String() string {
@@ -27,6 +32,8 @@ func (nt NodeType) String() string {
 		return "Expression"
 	case TypeDatasourceNode:
 		return "Datasource"
+	case TypeMLNode:
+		return "Machine Learning"
 	default:
 		return "Unknown"
 	}
@@ -37,7 +44,7 @@ type Node interface {
 	ID() int64 // ID() allows the gonum graph node interface to be fulfilled
 	NodeType() NodeType
 	RefID() string
-	Execute(c context.Context, vars mathexp.Vars, s *Service) (mathexp.Results, error)
+	Execute(ctx context.Context, now time.Time, vars mathexp.Vars, s *Service) (mathexp.Results, error)
 	String() string
 }
 
@@ -46,10 +53,19 @@ type DataPipeline []Node
 
 // execute runs all the command/datasource requests in the pipeline return a
 // map of the refId of the of each command
-func (dp *DataPipeline) execute(c context.Context, s *Service) (mathexp.Vars, error) {
+func (dp *DataPipeline) execute(c context.Context, now time.Time, s *Service) (mathexp.Vars, error) {
 	vars := make(mathexp.Vars)
 	for _, node := range *dp {
-		res, err := node.Execute(c, vars, s)
+		c, span := s.tracer.Start(c, "SSE.ExecuteNode")
+		span.SetAttributes("node.refId", node.RefID(), attribute.Key("node.refId").String(node.RefID()))
+		if node.NodeType() == TypeCMDNode {
+			cmdNode := node.(*CMDNode)
+			inputRefIDs := cmdNode.Command.NeedsVars()
+			span.SetAttributes("node.inputRefIDs", inputRefIDs, attribute.Key("node.inputRefIDs").StringSlice(inputRefIDs))
+		}
+		defer span.End()
+
+		res, err := node.Execute(c, now, vars, s)
 		if err != nil {
 			return nil, err
 		}
@@ -62,6 +78,10 @@ func (dp *DataPipeline) execute(c context.Context, s *Service) (mathexp.Vars, er
 // BuildPipeline builds a graph of the nodes, and returns the nodes in an
 // executable order.
 func (s *Service) buildPipeline(req *Request) (DataPipeline, error) {
+	if req != nil && len(req.Headers) == 0 {
+		req.Headers = map[string]string{}
+	}
+
 	graph, err := s.buildDependencyGraph(req)
 	if err != nil {
 		return nil, err
@@ -126,7 +146,7 @@ func (s *Service) buildGraph(req *Request) (*simple.DirectedGraph, error) {
 	dp := simple.NewDirectedGraph()
 
 	for _, query := range req.Queries {
-		if query.DataSource == nil || query.DataSource.Uid == "" {
+		if query.DataSource == nil || query.DataSource.UID == "" {
 			return nil, fmt.Errorf("missing datasource uid in query with refId %v", query.RefID)
 		}
 
@@ -144,6 +164,7 @@ func (s *Service) buildGraph(req *Request) (*simple.DirectedGraph, error) {
 
 		rn := &rawNode{
 			Query:      rawQueryProp,
+			QueryRaw:   query.JSON,
 			RefID:      query.RefID,
 			TimeRange:  query.TimeRange,
 			QueryType:  query.QueryType,
@@ -151,11 +172,22 @@ func (s *Service) buildGraph(req *Request) (*simple.DirectedGraph, error) {
 		}
 
 		var node Node
-
-		if IsDataSource(rn.DataSource.Uid) {
-			node, err = buildCMDNode(dp, rn)
-		} else {
+		switch NodeTypeFromDatasourceUID(query.DataSource.UID) {
+		case TypeDatasourceNode:
 			node, err = s.buildDSNode(dp, rn, req)
+		case TypeCMDNode:
+			node, err = buildCMDNode(dp, rn)
+		case TypeMLNode:
+			if s.features.IsEnabled(featuremgmt.FlagMlExpressions) {
+				node, err = s.buildMLNode(dp, rn, req)
+				if err != nil {
+					err = fmt.Errorf("fail to parse expression with refID %v: %w", rn.RefID, err)
+				}
+			}
+		}
+
+		if node == nil && err == nil {
+			err = fmt.Errorf("unsupported node type '%s'", NodeTypeFromDatasourceUID(query.DataSource.UID))
 		}
 
 		if err != nil {
@@ -189,7 +221,7 @@ func buildGraphEdges(dp *simple.DirectedGraph, registry map[string]Node) error {
 			}
 
 			if neededNode.ID() == cmdNode.ID() {
-				return fmt.Errorf("can not add self referencing node for var '%v' ", neededVar)
+				return fmt.Errorf("expression '%v' cannot reference itself. Must be query or another expression", neededVar)
 			}
 
 			if cmdNode.CMDType == TypeClassicConditions {

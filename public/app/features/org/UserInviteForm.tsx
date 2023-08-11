@@ -1,6 +1,9 @@
 import React from 'react';
+
+import { locationUtil, SelectableValue } from '@grafana/data';
+import { Stack } from '@grafana/experimental';
+import { config, locationService } from '@grafana/runtime';
 import {
-  HorizontalGroup,
   Button,
   LinkButton,
   Input,
@@ -9,23 +12,42 @@ import {
   Form,
   Field,
   InputControl,
+  FieldSet,
+  Icon,
+  TextLink,
+  Tooltip,
+  Label,
 } from '@grafana/ui';
 import { getConfig } from 'app/core/config';
-import { OrgRole } from 'app/types';
-import { locationService } from '@grafana/runtime';
-import { locationUtil } from '@grafana/data';
-import { userInviteSubmit } from './api';
+import { contextSrv } from 'app/core/core';
+import { OrgRole, useDispatch } from 'app/types';
 
-const roles = [
-  { label: 'Viewer', value: OrgRole.Viewer },
-  { label: 'Editor', value: OrgRole.Editor },
-  { label: 'Admin', value: OrgRole.Admin },
-];
+import { addInvitee } from '../invites/state/actions';
 
-const onSubmit = async (formData: FormModel) => {
-  await userInviteSubmit(formData);
-  locationService.push('/org/users/');
-};
+const noBasicRoleFlag = contextSrv.licensedAccessControlEnabled() && config.featureToggles.noBasicRole;
+const tooltipMessage = noBasicRoleFlag ? (
+  <>
+    You can now select the &quot;No basic role&quot; option and add permissions to your custom needs. You can find more
+    information in&nbsp;
+    <TextLink
+      href="https://grafana.com/docs/grafana/latest/administration/roles-and-permissions/#organization-roles"
+      variant="bodySmall"
+      external
+    >
+      our documentation
+    </TextLink>
+    .
+  </>
+) : (
+  ''
+);
+
+const roles: Array<SelectableValue<OrgRole>> = Object.values(OrgRole)
+  .filter((r) => noBasicRoleFlag || r !== OrgRole.None)
+  .map((r) => ({
+    label: r === OrgRole.None ? 'No basic role' : r,
+    value: r,
+  }));
 
 export interface FormModel {
   role: OrgRole;
@@ -35,12 +57,19 @@ export interface FormModel {
   email: string;
 }
 
+const defaultValues: FormModel = {
+  name: '',
+  email: '',
+  role: OrgRole.Editor,
+  sendEmail: true,
+};
+
 export const UserInviteForm = () => {
-  const defaultValues: FormModel = {
-    name: '',
-    email: '',
-    role: OrgRole.Editor,
-    sendEmail: true,
+  const dispatch = useDispatch();
+
+  const onSubmit = async (formData: FormModel) => {
+    await dispatch(addInvitee(formData)).unwrap();
+    locationService.push('/admin/users/');
   };
 
   return (
@@ -48,32 +77,48 @@ export const UserInviteForm = () => {
       {({ register, control, errors }) => {
         return (
           <>
-            <Field
-              invalid={!!errors.loginOrEmail}
-              error={!!errors.loginOrEmail ? 'Email or username is required' : undefined}
-              label="Email or username"
-            >
-              <Input {...register('loginOrEmail', { required: true })} placeholder="email@example.com" />
-            </Field>
-            <Field invalid={!!errors.name} label="Name">
-              <Input {...register('name')} placeholder="(optional)" />
-            </Field>
-            <Field invalid={!!errors.role} label="Role">
-              <InputControl
-                render={({ field: { ref, ...field } }) => <RadioButtonGroup {...field} options={roles} />}
-                control={control}
-                name="role"
-              />
-            </Field>
-            <Field label="Send invite email">
-              <Switch id="send-email-switch" {...register('sendEmail')} />
-            </Field>
-            <HorizontalGroup>
+            <FieldSet>
+              <Field
+                invalid={!!errors.loginOrEmail}
+                error={!!errors.loginOrEmail ? 'Email or username is required' : undefined}
+                label="Email or username"
+              >
+                <Input {...register('loginOrEmail', { required: true })} placeholder="email@example.com" />
+              </Field>
+              <Field invalid={!!errors.name} label="Name">
+                <Input {...register('name')} placeholder="(optional)" />
+              </Field>
+              <Field
+                invalid={!!errors.role}
+                label={
+                  <Label>
+                    <Stack gap={0.5}>
+                      <span>Role</span>
+                      {tooltipMessage && (
+                        <Tooltip placement="right-end" interactive={true} content={tooltipMessage}>
+                          <Icon name="info-circle" size="xs" />
+                        </Tooltip>
+                      )}
+                    </Stack>
+                  </Label>
+                }
+              >
+                <InputControl
+                  render={({ field: { ref, ...field } }) => <RadioButtonGroup {...field} options={roles} />}
+                  control={control}
+                  name="role"
+                />
+              </Field>
+              <Field label="Send invite email">
+                <Switch id="send-email-switch" {...register('sendEmail')} />
+              </Field>
+            </FieldSet>
+            <Stack>
               <Button type="submit">Submit</Button>
-              <LinkButton href={locationUtil.assureBaseUrl(getConfig().appSubUrl + '/org/users')} variant="secondary">
+              <LinkButton href={locationUtil.assureBaseUrl(getConfig().appSubUrl + '/admin/users')} variant="secondary">
                 Back
               </LinkButton>
-            </HorizontalGroup>
+            </Stack>
           </>
         );
       }}

@@ -1,12 +1,16 @@
-import { serializeStateToUrlParam } from '@grafana/data/src/utils/url';
-import { exploreReducer, navigateToExplore, splitCloseAction } from './main';
 import { thunkTester } from 'test/core/thunk/thunkTester';
-import { PanelModel } from 'app/features/dashboard/state';
-import { MockDataSourceApi } from '../../../../test/mocks/datasource_srv';
-import { ExploreId, ExploreItemState, ExploreState } from '../../../types';
-import { reducerTester } from '../../../../test/core/redux/reducerTester';
+
 import { ExploreUrlState } from '@grafana/data';
+import { serializeStateToUrlParam } from '@grafana/data/src/utils/url';
 import { locationService } from '@grafana/runtime';
+import { PanelModel } from 'app/features/dashboard/state';
+
+import { reducerTester } from '../../../../test/core/redux/reducerTester';
+import { MockDataSourceApi } from '../../../../test/mocks/datasource_srv';
+import { configureStore } from '../../../store/configureStore';
+import { ExploreItemState, ExploreState, StoreState, ThunkDispatch } from '../../../types';
+
+import { exploreReducer, navigateToExplore, splitClose, splitOpen } from './main';
 
 const getNavigateToExploreContext = async (openInNewWindow?: (url: string) => void) => {
   const url = '/explore';
@@ -38,28 +42,25 @@ const getNavigateToExploreContext = async (openInNewWindow?: (url: string) => vo
 describe('navigateToExplore', () => {
   describe('when navigateToExplore thunk is dispatched', () => {
     describe('and openInNewWindow is undefined', () => {
-      const openInNewWindow: (url: string) => void = (undefined as unknown) as (url: string) => void;
       it('then it should dispatch correct actions', async () => {
-        const { url } = await getNavigateToExploreContext(openInNewWindow);
+        const { url } = await getNavigateToExploreContext();
         expect(locationService.getLocation().pathname).toEqual(url);
       });
 
       it('then getDataSourceSrv should have been once', async () => {
-        const { getDataSourceSrv } = await getNavigateToExploreContext(openInNewWindow);
+        const { getDataSourceSrv } = await getNavigateToExploreContext();
 
         expect(getDataSourceSrv).toHaveBeenCalledTimes(1);
       });
 
       it('then getTimeSrv should have been called once', async () => {
-        const { getTimeSrv } = await getNavigateToExploreContext(openInNewWindow);
+        const { getTimeSrv } = await getNavigateToExploreContext();
 
         expect(getTimeSrv).toHaveBeenCalledTimes(1);
       });
 
       it('then getExploreUrl should have been called with correct arguments', async () => {
-        const { getExploreUrl, panel, getDataSourceSrv, getTimeSrv } = await getNavigateToExploreContext(
-          openInNewWindow
-        );
+        const { getExploreUrl, panel, getDataSourceSrv, getTimeSrv } = await getNavigateToExploreContext();
 
         expect(getExploreUrl).toHaveBeenCalledTimes(1);
         expect(getExploreUrl).toHaveBeenCalledWith({
@@ -116,58 +117,96 @@ describe('navigateToExplore', () => {
 
 describe('Explore reducer', () => {
   describe('split view', () => {
-    describe('split close', () => {
-      it('should keep right pane as left when left is closed', () => {
-        const leftItemMock = ({
-          containerWidth: 100,
-        } as unknown) as ExploreItemState;
+    describe('split open', () => {
+      it('it should create only ony new pane', async () => {
+        let dispatch: ThunkDispatch, getState: () => StoreState;
 
-        const rightItemMock = ({
-          containerWidth: 200,
-        } as unknown) as ExploreItemState;
+        const store: { dispatch: ThunkDispatch; getState: () => StoreState } = configureStore({
+          explore: {
+            panes: {
+              one: { queries: [], range: {} },
+            },
+          },
+        } as unknown as Partial<StoreState>);
 
-        const initialState = ({
-          left: leftItemMock,
-          right: rightItemMock,
-        } as unknown) as ExploreState;
+        dispatch = store.dispatch;
+        getState = store.getState;
 
-        // closing left item
-        reducerTester<ExploreState>()
-          .givenReducer(exploreReducer, initialState)
-          .whenActionIsDispatched(splitCloseAction({ itemId: ExploreId.left }))
-          .thenStateShouldEqual(({
-            left: rightItemMock,
-            right: undefined,
-          } as unknown) as ExploreState);
+        await dispatch(splitOpen());
+        let splitPanes = Object.keys(getState().explore.panes);
+        expect(splitPanes).toHaveLength(2);
+        let secondSplitPaneId = splitPanes[1];
+
+        await dispatch(splitOpen());
+        splitPanes = Object.keys(getState().explore.panes);
+        // only 2 panes exist...
+        expect(splitPanes).toHaveLength(2);
+        // ...and the second pane is replaced
+        expect(splitPanes[0]).toBe('one');
+        expect(splitPanes[1]).not.toBe(secondSplitPaneId);
       });
-      it('should reset right pane when it is closed ', () => {
-        const leftItemMock = ({
+    });
+    describe('split close', () => {
+      it('should reset right pane when it is closed', () => {
+        const leftItemMock = {
           containerWidth: 100,
-        } as unknown) as ExploreItemState;
+        } as unknown as ExploreItemState;
 
-        const rightItemMock = ({
+        const rightItemMock = {
           containerWidth: 200,
-        } as unknown) as ExploreItemState;
+        } as unknown as ExploreItemState;
 
-        const initialState = ({
-          left: leftItemMock,
-          right: rightItemMock,
-        } as unknown) as ExploreState;
+        const initialState = {
+          panes: {
+            left: leftItemMock,
+            right: rightItemMock,
+          },
+        } as unknown as ExploreState;
 
         // closing left item
         reducerTester<ExploreState>()
           .givenReducer(exploreReducer, initialState)
-          .whenActionIsDispatched(splitCloseAction({ itemId: ExploreId.right }))
-          .thenStateShouldEqual(({
-            left: leftItemMock,
-            right: undefined,
-          } as unknown) as ExploreState);
+          .whenActionIsDispatched(splitClose('right'))
+          .thenStateShouldEqual({
+            evenSplitPanes: true,
+            largerExploreId: undefined,
+            panes: {
+              left: leftItemMock,
+            },
+            maxedExploreId: undefined,
+            syncedTimes: false,
+          } as unknown as ExploreState);
+      });
+
+      it('should unsync time ranges', () => {
+        const itemMock = {
+          containerWidth: 100,
+        } as unknown as ExploreItemState;
+
+        const initialState = {
+          panes: {
+            right: itemMock,
+            left: itemMock,
+          },
+          syncedTimes: true,
+        } as unknown as ExploreState;
+
+        reducerTester<ExploreState>()
+          .givenReducer(exploreReducer, initialState)
+          .whenActionIsDispatched(splitClose('right'))
+          .thenStateShouldEqual({
+            evenSplitPanes: true,
+            panes: {
+              left: itemMock,
+            },
+            syncedTimes: false,
+          } as unknown as ExploreState);
       });
     });
   });
 });
 
-export const setup = (urlStateOverrides?: any) => {
+export const setup = (urlStateOverrides?: Partial<ExploreUrlState>) => {
   const urlStateDefaults: ExploreUrlState = {
     datasource: 'some-datasource',
     queries: [],
@@ -178,9 +217,9 @@ export const setup = (urlStateOverrides?: any) => {
   };
   const urlState: ExploreUrlState = { ...urlStateDefaults, ...urlStateOverrides };
   const serializedUrlState = serializeStateToUrlParam(urlState);
-  const initialState = ({
+  const initialState = {
     split: false,
-  } as unknown) as ExploreState;
+  } as unknown as ExploreState;
 
   return {
     initialState,

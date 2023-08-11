@@ -1,4 +1,9 @@
+import Map from 'ol/Map';
+import { Point } from 'ol/geom';
+import * as layer from 'ol/layer';
+
 import {
+  EventBus,
   FieldType,
   getFieldColorModeForField,
   GrafanaTheme2,
@@ -6,12 +11,11 @@ import {
   MapLayerRegistryItem,
   PanelData,
 } from '@grafana/data';
-import Map from 'ol/Map';
-import * as layer from 'ol/layer';
-import { getLocationMatchers } from 'app/features/geo/utils/location';
-import { ScaleDimensionConfig, getScaledDimension } from 'app/features/dimensions';
+import { ScaleDimensionConfig } from '@grafana/schema';
+import { getScaledDimension } from 'app/features/dimensions';
 import { ScaleDimensionEditor } from 'app/features/dimensions/editors';
 import { FrameVectorSource } from 'app/features/geo/utils/frameVectorSource';
+import { getLocationMatchers } from 'app/features/geo/utils/location';
 
 // Configuration options for Heatmap overlays
 export interface HeatmapConfig {
@@ -36,7 +40,7 @@ const defaultOptions: HeatmapConfig = {
 export const heatmapLayer: MapLayerRegistryItem<HeatmapConfig> = {
   id: 'heatmap',
   name: 'Heatmap',
-  description: 'visualizes a heatmap of the data',
+  description: 'Visualizes a heatmap of the data',
   isBaseMap: false,
   showLocation: true,
 
@@ -44,11 +48,11 @@ export const heatmapLayer: MapLayerRegistryItem<HeatmapConfig> = {
    * Function that configures transformation and returns a transformer
    * @param options
    */
-  create: async (map: Map, options: MapLayerOptions<HeatmapConfig>, theme: GrafanaTheme2) => {
+  create: async (map: Map, options: MapLayerOptions<HeatmapConfig>, eventBus: EventBus, theme: GrafanaTheme2) => {
     const config = { ...defaultOptions, ...options.config };
     
     const location = await getLocationMatchers(options.location);
-    const source = new FrameVectorSource(location);
+    const source = new FrameVectorSource<Point>(location);
     const WEIGHT_KEY = "_weight";
 
     // Create a new Heatmap layer
@@ -117,7 +121,7 @@ export const heatmapLayer: MapLayerRegistryItem<HeatmapConfig> = {
           })
           .addSliderInput({
             path: 'config.radius',
-            description: 'configures the size of clusters',
+            description: 'Configures the size of clusters',
             name: 'Radius',
             defaultValue: defaultOptions.radius,
             settings: {
@@ -128,7 +132,7 @@ export const heatmapLayer: MapLayerRegistryItem<HeatmapConfig> = {
           })
           .addSliderInput({
             path: 'config.blur',
-            description: 'configures the amount of blur of clusters',
+            description: 'Configures the amount of blur of clusters',
             name: 'Blur',
             defaultValue: defaultOptions.blur,
             settings: {

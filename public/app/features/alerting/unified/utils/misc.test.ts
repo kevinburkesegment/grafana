@@ -1,7 +1,7 @@
-import { sortAlerts } from 'app/features/alerting/unified/utils/misc';
-import { GrafanaAlertState } from 'app/types/unified-alerting-dto';
-import { Alert } from 'app/types/unified-alerting';
+import { sortAlerts, wrapWithQuotes, escapeQuotes, createExploreLink } from 'app/features/alerting/unified/utils/misc';
 import { SortOrder } from 'app/plugins/panel/alertlist/types';
+import { Alert } from 'app/types/unified-alerting';
+import { GrafanaAlertState } from 'app/types/unified-alerting-dto';
 
 function withState(state: GrafanaAlertState, labels?: {}): Alert {
   return { activeAt: '', annotations: {}, labels: labels || {}, state: state, value: '' };
@@ -32,6 +32,24 @@ function permute(inputArray: any[]): any[] {
     );
   }, []);
 }
+
+describe('wrapWithQuotes', () => {
+  it('should work as expected', () => {
+    expect(wrapWithQuotes('"hello, world!"')).toBe('\\"hello, world!\\"');
+    expect(wrapWithQuotes('hello, world!')).toBe('"hello, world!"');
+    expect(wrapWithQuotes('hello, "world"!')).toBe('"hello, \\"world\\"!"');
+    expect(wrapWithQuotes('"hello""')).toBe('\\"hello\\"\\"');
+  });
+});
+
+describe('escapeQuotes', () => {
+  it('should escape all quotes', () => {
+    expect(escapeQuotes('"hello, world!"')).toBe('\\"hello, world!\\"');
+    expect(escapeQuotes('hello, world!')).toBe('hello, world!');
+    expect(escapeQuotes('hello, "world"!')).toBe('hello, \\"world\\"!');
+    expect(escapeQuotes('hello"')).toBe('hello\\"');
+  });
+});
 
 describe('Unified Altering misc', () => {
   describe('sortAlerts', () => {
@@ -66,5 +84,14 @@ describe('Unified Altering misc', () => {
         });
       });
     });
+  });
+});
+
+describe('createExploreLink', () => {
+  it('should create a correct explore link', () => {
+    const url = createExploreLink({ uid: 'uid', type: 'type' }, 'cpu_utilization > 0.5');
+    expect(url).toBe(
+      '/explore?left=%7B%22datasource%22%3A%22uid%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22uid%22%3A%22uid%22%2C%22type%22%3A%22type%22%7D%2C%22expr%22%3A%22cpu_utilization+%3E+0.5%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-1h%22%2C%22to%22%3A%22now%22%7D%7D'
+    );
   });
 });

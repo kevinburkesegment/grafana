@@ -1,21 +1,24 @@
 import React, { useMemo } from 'react';
-import { Field, PanelProps } from '@grafana/data';
+
+import { PanelProps, DataFrameType } from '@grafana/data';
+import { PanelDataErrorView } from '@grafana/runtime';
 import { TooltipDisplayMode } from '@grafana/schema';
-import { usePanelContext, TimeSeries, TooltipPlugin, ZoomPlugin, KeyboardPlugin } from '@grafana/ui';
-import { getFieldLinksForExplore } from 'app/features/explore/utils/links';
+import { KeyboardPlugin, TimeSeries, TooltipPlugin, usePanelContext, ZoomPlugin } from '@grafana/ui';
+import { config } from 'app/core/config';
+
+import { Options } from './panelcfg.gen';
+import { AnnotationEditorPlugin } from './plugins/AnnotationEditorPlugin';
 import { AnnotationsPlugin } from './plugins/AnnotationsPlugin';
 import { ContextMenuPlugin } from './plugins/ContextMenuPlugin';
-import { ExemplarsPlugin } from './plugins/ExemplarsPlugin';
-import { TimeSeriesOptions } from './types';
-import { prepareGraphableFields } from './utils';
-import { AnnotationEditorPlugin } from './plugins/AnnotationEditorPlugin';
+import { ExemplarsPlugin, getVisibleLabels } from './plugins/ExemplarsPlugin';
+import { OutsideRangePlugin } from './plugins/OutsideRangePlugin';
 import { ThresholdControlsPlugin } from './plugins/ThresholdControlsPlugin';
-import { config } from 'app/core/config';
-import { PanelDataErrorView } from '@grafana/runtime';
+import { getPrepareTimeseriesSuggestion } from './suggestions';
+import { getTimezones, prepareGraphableFields, regenerateLinksSupplier } from './utils';
 
-interface TimeSeriesPanelProps extends PanelProps<TimeSeriesOptions> {}
+interface TimeSeriesPanelProps extends PanelProps<Options> {}
 
-export const TimeSeriesPanel: React.FC<TimeSeriesPanelProps> = ({
+export const TimeSeriesPanel = ({
   data,
   timeRange,
   timeZone,
@@ -26,17 +29,35 @@ export const TimeSeriesPanel: React.FC<TimeSeriesPanelProps> = ({
   onChangeTimeRange,
   replaceVariables,
   id,
-}) => {
-  const { sync, canAddAnnotations, onThresholdsChange, canEditThresholds, onSplitOpen } = usePanelContext();
+}: TimeSeriesPanelProps) => {
+  const { sync, canAddAnnotations, onThresholdsChange, canEditThresholds, showThresholds, dataLinkPostProcessor } =
+    usePanelContext();
 
-  const getFieldLinks = (field: Field, rowIndex: number) => {
-    return getFieldLinksForExplore({ field, rowIndex, splitOpenFn: onSplitOpen, range: timeRange });
-  };
+  const frames = useMemo(() => prepareGraphableFields(data.series, config.theme2, timeRange), [data.series, timeRange]);
+  const timezones = useMemo(() => getTimezones(options.timezone, timeZone), [options.timezone, timeZone]);
+  const suggestions = useMemo(() => {
+    if (frames?.length && frames.every((df) => df.meta?.type === DataFrameType.TimeSeriesLong)) {
+      const s = getPrepareTimeseriesSuggestion(id);
+      return {
+        message: 'Long data must be converted to wide',
+        suggestions: s ? [s] : undefined,
+      };
+    }
+    return undefined;
+  }, [frames, id]);
 
-  const frames = useMemo(() => prepareGraphableFields(data.series, config.theme2), [data]);
-
-  if (!frames) {
-    return <PanelDataErrorView panelId={id} data={data} needsTimeField={true} needsNumberField={true} />;
+  if (!frames || suggestions) {
+    return (
+      <PanelDataErrorView
+        panelId={id}
+        message={suggestions?.message}
+        fieldConfig={fieldConfig}
+        data={data}
+        needsTimeField={true}
+        needsNumberField={true}
+        suggestions={suggestions?.suggestions}
+      />
+    );
   }
 
   const enableAnnotationCreation = Boolean(canAddAnnotations && canAddAnnotations());
@@ -46,18 +67,30 @@ export const TimeSeriesPanel: React.FC<TimeSeriesPanelProps> = ({
       frames={frames}
       structureRev={data.structureRev}
       timeRange={timeRange}
-      timeZone={timeZone}
+      timeZone={timezones}
       width={width}
       height={height}
       legend={options.legend}
+      options={options}
     >
       {(config, alignedDataFrame) => {
+        if (alignedDataFrame.fields.some((f) => Boolean(f.config.links?.length))) {
+          alignedDataFrame = regenerateLinksSupplier(
+            alignedDataFrame,
+            frames,
+            replaceVariables,
+            timeZone,
+            dataLinkPostProcessor
+          );
+        }
+
         return (
           <>
             <KeyboardPlugin config={config} />
             <ZoomPlugin config={config} onZoom={onChangeTimeRange} />
             {options.tooltip.mode === TooltipDisplayMode.None || (
               <TooltipPlugin
+                frames={frames}
                 data={alignedDataFrame}
                 config={config}
                 mode={options.tooltip.mode}
@@ -104,6 +137,7 @@ export const TimeSeriesPanel: React.FC<TimeSeriesPanelProps> = ({
             ) : (
               <ContextMenuPlugin
                 data={alignedDataFrame}
+                frames={frames}
                 config={config}
                 timeZone={timeZone}
                 replaceVariables={replaceVariables}
@@ -112,20 +146,22 @@ export const TimeSeriesPanel: React.FC<TimeSeriesPanelProps> = ({
             )}
             {data.annotations && (
               <ExemplarsPlugin
+                visibleSeries={getVisibleLabels(config, frames)}
                 config={config}
                 exemplars={data.annotations}
                 timeZone={timeZone}
-                getFieldLinks={getFieldLinks}
               />
             )}
 
-            {canEditThresholds && onThresholdsChange && (
+            {((canEditThresholds && onThresholdsChange) || showThresholds) && (
               <ThresholdControlsPlugin
                 config={config}
                 fieldConfig={fieldConfig}
-                onThresholdsChange={onThresholdsChange}
+                onThresholdsChange={canEditThresholds ? onThresholdsChange : undefined}
               />
             )}
+
+            <OutsideRangePlugin config={config} onChangeTimeRange={onChangeTimeRange} />
           </>
         );
       }}

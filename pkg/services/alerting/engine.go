@@ -7,18 +7,25 @@ import (
 	"time"
 
 	"github.com/benbjohnson/clock"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/grafana/grafana/pkg/bus"
+	"github.com/grafana/grafana/pkg/infra/localcache"
 	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/infra/tracing"
 	"github.com/grafana/grafana/pkg/infra/usagestats"
-	"github.com/grafana/grafana/pkg/models"
+	"github.com/grafana/grafana/pkg/infra/usagestats/validator"
+	"github.com/grafana/grafana/pkg/services/annotations"
+	"github.com/grafana/grafana/pkg/services/dashboards"
+	"github.com/grafana/grafana/pkg/services/datasources"
 	"github.com/grafana/grafana/pkg/services/encryption"
+	"github.com/grafana/grafana/pkg/services/notifications"
 	"github.com/grafana/grafana/pkg/services/rendering"
+	"github.com/grafana/grafana/pkg/services/validations"
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/tsdb/legacydata"
+	"github.com/grafana/grafana/pkg/util/ticker"
 )
 
 // AlertEngine is the background process that
@@ -26,20 +33,25 @@ import (
 // are sent.
 type AlertEngine struct {
 	RenderService    rendering.Service
-	Bus              bus.Bus
-	RequestValidator models.PluginRequestValidator
+	RequestValidator validations.PluginRequestValidator
 	DataService      legacydata.RequestHandler
 	Cfg              *setting.Cfg
 
-	execQueue         chan *Job
-	ticker            *Ticker
-	scheduler         scheduler
-	evalHandler       evalHandler
-	ruleReader        ruleReader
-	log               log.Logger
-	resultHandler     resultHandler
-	usageStatsService usagestats.Service
-	tracer            tracing.Tracer
+	execQueue          chan *Job
+	ticker             *ticker.T
+	scheduler          scheduler
+	evalHandler        evalHandler
+	ruleReader         ruleReader
+	log                log.Logger
+	resultHandler      resultHandler
+	usageStatsService  usagestats.Service
+	validator          validator.Service
+	tracer             tracing.Tracer
+	AlertStore         AlertStore
+	dashAlertExtractor DashAlertExtractor
+	dashboardService   dashboards.DashboardService
+	datasourceService  datasources.DataSourceService
+	annotationsRepo    annotations.Repository
 }
 
 // IsDisabled returns true if the alerting service is disabled for this instance.
@@ -48,25 +60,30 @@ func (e *AlertEngine) IsDisabled() bool {
 }
 
 // ProvideAlertEngine returns a new AlertEngine.
-func ProvideAlertEngine(renderer rendering.Service, bus bus.Bus, requestValidator models.PluginRequestValidator,
-	dataService legacydata.RequestHandler, usageStatsService usagestats.Service, encryptionService encryption.Internal,
-	cfg *setting.Cfg, tracer tracing.Tracer) *AlertEngine {
+func ProvideAlertEngine(renderer rendering.Service, requestValidator validations.PluginRequestValidator,
+	dataService legacydata.RequestHandler, usageStatsService usagestats.Service, validator validator.Service, encryptionService encryption.Internal,
+	notificationService *notifications.NotificationService, tracer tracing.Tracer, store AlertStore, cfg *setting.Cfg,
+	dashAlertExtractor DashAlertExtractor, dashboardService dashboards.DashboardService, cacheService *localcache.CacheService, dsService datasources.DataSourceService, annotationsRepo annotations.Repository) *AlertEngine {
 	e := &AlertEngine{
-		Cfg:               cfg,
-		RenderService:     renderer,
-		Bus:               bus,
-		RequestValidator:  requestValidator,
-		DataService:       dataService,
-		usageStatsService: usageStatsService,
-		tracer:            tracer,
+		Cfg:                cfg,
+		RenderService:      renderer,
+		RequestValidator:   requestValidator,
+		DataService:        dataService,
+		usageStatsService:  usageStatsService,
+		validator:          validator,
+		tracer:             tracer,
+		AlertStore:         store,
+		dashAlertExtractor: dashAlertExtractor,
+		dashboardService:   dashboardService,
+		datasourceService:  dsService,
+		annotationsRepo:    annotationsRepo,
 	}
-	e.ticker = NewTicker(time.Now(), time.Second*0, clock.New(), 1)
 	e.execQueue = make(chan *Job, 1000)
 	e.scheduler = newScheduler()
 	e.evalHandler = NewEvalHandler(e.DataService)
-	e.ruleReader = newRuleReader()
+	e.ruleReader = newRuleReader(store)
 	e.log = log.New("alerting.engine")
-	e.resultHandler = newResultHandler(e.RenderService, encryptionService.GetDecryptedValue)
+	e.resultHandler = newResultHandler(e.RenderService, store, notificationService, encryptionService.GetDecryptedValue)
 
 	e.registerUsageMetrics()
 
@@ -75,6 +92,9 @@ func ProvideAlertEngine(renderer rendering.Service, bus bus.Bus, requestValidato
 
 // Run starts the alerting service background process.
 func (e *AlertEngine) Run(ctx context.Context) error {
+	reg := prometheus.WrapRegistererWithPrefix("legacy_", prometheus.DefaultRegisterer)
+	e.ticker = ticker.New(clock.New(), 1*time.Second, ticker.NewMetrics(reg, "alerting"))
+	defer e.ticker.Stop()
 	alertGroup, ctx := errgroup.WithContext(ctx)
 	alertGroup.Go(func() error { return e.alertingTicker(ctx) })
 	alertGroup.Go(func() error { return e.runJobDispatcher(ctx) })
@@ -179,7 +199,7 @@ func (e *AlertEngine) processJob(attemptID int, attemptChan chan int, cancelChan
 	alertCtx, cancelFn := context.WithTimeout(context.Background(), setting.AlertingEvaluationTimeout)
 	cancelChan <- cancelFn
 	alertCtx, span := e.tracer.Start(alertCtx, "alert execution")
-	evalContext := NewEvalContext(alertCtx, job.Rule, e.RequestValidator)
+	evalContext := NewEvalContext(alertCtx, job.Rule, e.RequestValidator, e.AlertStore, e.dashboardService, e.datasourceService, e.annotationsRepo)
 	evalContext.Ctx = alertCtx
 
 	go func() {
@@ -261,7 +281,7 @@ func (e *AlertEngine) registerUsageMetrics() {
 		metrics := map[string]interface{}{}
 
 		for dsType, usageCount := range alertingUsageStats.DatasourceUsage {
-			if e.usageStatsService.ShouldBeReported(ctx, dsType) {
+			if e.validator.ShouldBeReported(ctx, dsType) {
 				metrics[fmt.Sprintf("stats.alerting.ds.%s.count", dsType)] = usageCount
 			} else {
 				alertingOtherCount += usageCount

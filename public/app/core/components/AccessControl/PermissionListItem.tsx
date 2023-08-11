@@ -1,6 +1,8 @@
 import React from 'react';
-import { ResourcePermission } from './types';
+
 import { Button, Icon, Select, Tooltip } from '@grafana/ui';
+
+import { ResourcePermission } from './types';
 
 interface Props {
   item: ResourcePermission;
@@ -12,19 +14,16 @@ interface Props {
 
 export const PermissionListItem = ({ item, permissionLevels, canSet, onRemove, onChange }: Props) => (
   <tr>
-    <td style={{ width: '1%' }}>{getAvatar(item)}</td>
-    <td style={{ width: '90%' }}>{getDescription(item)}</td>
+    <td>{getAvatar(item)}</td>
+    <td>{getDescription(item)}</td>
+    <td>{item.isInherited && <em className="muted no-wrap">Inherited from folder</em>}</td>
     <td>
-      <div className="gf-form">
-        <Select
-          className="width-20"
-          menuShouldPortal
-          disabled={!canSet || !item.isManaged}
-          onChange={(p) => onChange(item, p.value!)}
-          value={permissionLevels.find((p) => p === item.permission)}
-          options={permissionLevels.map((p) => ({ value: p, label: p }))}
-        />
-      </div>
+      <Select
+        disabled={!canSet || !item.isManaged}
+        onChange={(p) => onChange(item, p.value!)}
+        value={permissionLevels.find((p) => p === item.permission)}
+        options={permissionLevels.map((p) => ({ value: p, label: p }))}
+      />
     </td>
     <td>
       <Tooltip content={getPermissionInfo(item)}>
@@ -42,7 +41,7 @@ export const PermissionListItem = ({ item, permissionLevels, canSet, onRemove, o
           aria-label={`Remove permission for ${getName(item)}`}
         />
       ) : (
-        <Tooltip content="Provisioned permission">
+        <Tooltip content={item.isInherited ? 'Inherited Permission' : 'Provisioned Permission'}>
           <Button size="sm" icon="lock" />
         </Tooltip>
       )}
